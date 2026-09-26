@@ -115,6 +115,8 @@ public:
 	inline static const matrix::Quatf _q_mc_to_fw{matrix::Eulerf{0.f, -M_PI_2_F, 0.f}};
 
 private:
+	friend class AutotuneModuleTest;
+
 	void Run() override;
 
 	uORB::SubscriptionCallbackWorkItem _att_sub{this, ORB_ID(vehicle_attitude)};		/**< vehicle attitude */

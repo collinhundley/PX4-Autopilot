@@ -84,6 +84,8 @@ public:
 	bool init();
 
 private:
+	friend class AutotuneModuleTest;
+
 	void Run() override;
 
 	/**

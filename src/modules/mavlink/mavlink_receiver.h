@@ -48,6 +48,7 @@
 #include "mavlink_mission.h"
 #include "mavlink_parameters.h"
 #include "MavlinkStatustextHandler.hpp"
+#include "MavlinkAutotune.hpp"
 #include "mavlink_timesync.h"
 #include "tune_publisher.h"
 
@@ -420,6 +421,7 @@ private:
 	uORB::Subscription	_vehicle_status_sub{ORB_ID(vehicle_status)};
 	uint8_t			_vehicle_type_bitmask{0}; ///< cached from vehicle_status; vehicle type requires reboot to change
 	uORB::Subscription	_autotune_attitude_control_status_sub{ORB_ID(autotune_attitude_control_status)};
+	MavlinkAutotune _autotune_command;
 
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
 

@@ -6,6 +6,8 @@
 # The rate_sp field is consumed by the controllers, while the remaining fields (model coefficients, gains, filters, and autotune state) are used for logging and debugging.
 
 uint64 timestamp  # [us] Time since system start
+uint64 timestamp_start # [us] Start of this tuning attempt (constant through terminal/idle status)
+uint8 vehicle_type # Owning tuner: vehicle_status VEHICLE_TYPE_ROTARY_WING or VEHICLE_TYPE_FIXED_WING
 
 float32[5] coeff      # [-] Coefficients of the identified discrete-time model
 float32[5] coeff_var  # [-] Coefficients' variance of the identified discrete-time model

@@ -40,6 +40,7 @@
 #pragma once
 
 #include <drivers/drv_hrt.h>
+#include <lib/autotune/Autotune.hpp>
 #include <lib/perf/perf_counter.h>
 #include <lib/pid_design/pid_design.hpp>
 #include <lib/system_identification/system_identification.hpp>
@@ -47,8 +48,7 @@
 #include <px4_platform_common/module.h>
 #include <px4_platform_common/module_params.h>
 #include <px4_platform_common/posix.h>
-#include <px4_platform_common/px4_work_queue/WorkItem.hpp>
-#include <uORB/Publication.hpp>
+#include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionCallback.hpp>
 #include <uORB/topics/actuator_controls_status.h>
@@ -64,7 +64,7 @@
 using namespace time_literals;
 
 class McAutotuneAttitudeControl : public ModuleBase, public ModuleParams,
-	public px4::WorkItem
+	public px4::ScheduledWorkItem
 {
 public:
 	static Descriptor desc;
@@ -87,11 +87,17 @@ public:
 	int print_status() override;
 
 private:
+	friend class AutotuneModuleTest;
+
 	void Run() override;
 
 	void checkFilters();
 
 	void updateStateMachine(hrt_abstime now);
+	void updateVehicleStatus();
+	bool checkAbort(hrt_abstime now);
+	void abortAutotune(hrt_abstime now);
+	void publishState(hrt_abstime now);
 	bool registerActuatorControlsCallback();
 	void stopAutotune();
 	bool areAllSmallerThan(const matrix::Vector<float, 5> &vect, float threshold) const;
@@ -112,7 +118,8 @@ private:
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
 	uORB::Subscription _vehicle_command_sub{ORB_ID(vehicle_command)};
 
-	uORB::PublicationData<autotune_attitude_control_status_s> _autotune_attitude_control_status_pub{ORB_ID(autotune_attitude_control_status)};
+	autotune::Session _session{vehicle_status_s::VEHICLE_TYPE_ROTARY_WING};
+	vehicle_status_s _vehicle_status{};
 
 	SystemIdentification _sys_id;
 
@@ -142,6 +149,7 @@ private:
 	uint8_t _nav_state{0};
 	uint8_t _start_flight_mode{0};
 	bool _vehicle_cmd_start_autotune{false};
+	hrt_abstime _start_request_timestamp{0};
 
 	matrix::Vector3f _kid{};
 	matrix::Vector3f _rate_k{};
@@ -162,6 +170,7 @@ private:
 	 */
 	float _input_scale{1.f};
 
+	hrt_abstime _last_control_input{0};
 	hrt_abstime _last_run{0};
 	hrt_abstime _last_publish{0};
 	hrt_abstime _last_model_update{0};

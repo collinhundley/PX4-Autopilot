@@ -45,15 +45,18 @@ ModuleBase::Descriptor FwAutotuneAttitudeControl::desc{task_spawn, custom_comman
 
 FwAutotuneAttitudeControl::FwAutotuneAttitudeControl(bool is_vtol) :
 	ModuleParams(nullptr),
-	WorkItem(MODULE_NAME, px4::wq_configurations::hp_default),
+	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::hp_default),
 	_vehicle_torque_setpoint_sub(this, ORB_ID(vehicle_torque_setpoint), is_vtol ? 1 : 0),
 	_actuator_controls_status_sub(is_vtol ? ORB_ID(actuator_controls_status_1) : ORB_ID(actuator_controls_status_0))
-{
-	_autotune_attitude_control_status_pub.advertise();
-}
+{}
 
 FwAutotuneAttitudeControl::~FwAutotuneAttitudeControl()
 {
+	if (_state != state::idle && _state != state::complete && _state != state::fail) {
+		abortAutotune(hrt_absolute_time());
+	}
+
+	_session.release();
 	perf_free(_cycle_perf);
 }
 
@@ -71,56 +74,83 @@ bool FwAutotuneAttitudeControl::init()
 		return false;
 	}
 
+	ScheduleNow();
 	return true;
 }
 
 void FwAutotuneAttitudeControl::Run()
 {
 	if (should_exit()) {
+		if (_session.ownsChannel()) {
+			if (_state != state::complete && _state != state::fail) {
+				abortAutotune(hrt_absolute_time());
+				_session.release();
+
+			} else {
+				autotune_attitude_control_status_s status{};
+				status.timestamp = hrt_absolute_time();
+				status.state = static_cast<uint8_t>(_state);
+				_session.publish(status);
+				_session.release();
+			}
+		}
+
 		_parameter_update_sub.unregisterCallback();
 		_vehicle_torque_setpoint_sub.unregisterCallback();
+		ScheduleClear();
 		exit_and_cleanup(desc);
 		return;
 	}
 
+	// Continue checking eligibility and terminal states if controller input stops.
+	ScheduleDelayed(100_ms);
+	updateVehicleStatus();
+	const hrt_abstime now = hrt_absolute_time();
+	const bool eligible = autotune::eligible(_vehicle_status, vehicle_status_s::VEHICLE_TYPE_FIXED_WING, now);
+	const bool parameters_updated = _parameter_update_sub.updated();
+
 	// check for parameter updates
-	if (_parameter_update_sub.updated()) {
+	if (parameters_updated) {
 		// clear update
 		parameter_update_s pupdate;
 		_parameter_update_sub.copy(&pupdate);
 
 		// update parameters from storage
 		updateParams();
-		updateStateMachine(hrt_absolute_time());
 	}
 
-	if (_vehicle_status_sub.updated()) {
-		vehicle_status_s vehicle_status;
-
-		if (_vehicle_status_sub.copy(&vehicle_status)) {
-			_armed = (vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED);
-			_nav_state = vehicle_status.nav_state;
-		}
-	}
-
-	if (_vehicle_command_sub.updated()) {
-		vehicle_command_s vehicle_command;
-
-		if (_vehicle_command_sub.copy(&vehicle_command)) {
-			if (vehicle_command.command == vehicle_command_s::VEHICLE_CMD_DO_AUTOTUNE_ENABLE) {
-				if (fabsf(vehicle_command.param1 - 1.0f) < FLT_EPSILON && fabsf(vehicle_command.param2) < FLT_EPSILON) {
-					_vehicle_cmd_start_autotune = true;
-				}
-			}
-		}
-	}
-
+	// Track the switch even when ineligible: a rejected ON must be followed by OFF.
+	const bool aux_switch_was_enabled = _aux_switch_en;
 	_aux_switch_en = isAuxEnableSwitchEnabled();
-	_want_start_autotune = _vehicle_cmd_start_autotune || _aux_switch_en;
+	_vehicle_cmd_start_autotune = false;
+	_start_request_timestamp = 0;
+	vehicle_command_s vehicle_command;
+
+	while (_vehicle_command_sub.update(&vehicle_command)) {
+		const hrt_abstime command_now = hrt_absolute_time();
+
+		if (vehicle_command.command == vehicle_command_s::VEHICLE_CMD_DO_AUTOTUNE_ENABLE
+		    && fabsf(vehicle_command.param1 - 1.0f) < FLT_EPSILON && fabsf(vehicle_command.param2) < FLT_EPSILON
+		    && vehicle_command.timestamp != 0 && vehicle_command.timestamp <= command_now
+		    && command_now - vehicle_command.timestamp <= 2_s && eligible && _state == state::idle) {
+			_vehicle_cmd_start_autotune = true;
+			_start_request_timestamp = vehicle_command.timestamp;
+		}
+	}
+
+	_want_start_autotune = eligible && _state == state::idle
+			       && (_vehicle_cmd_start_autotune || (_aux_switch_en && !aux_switch_was_enabled));
+
+	checkAbort(now);
+
+	// Refresh status and the AUX edge before every state-machine entry path.
+	if (parameters_updated || _state == state::idle || _state == state::complete || _state == state::fail
+	    || _state == state::wait_for_disarm) {
+		updateStateMachine(now);
+	}
 
 	// new control data needed every iteration
-	if ((_state == state::idle && !_want_start_autotune)
-	    || !_vehicle_torque_setpoint_sub.updated()) {
+	if (_state == state::idle || !_vehicle_torque_setpoint_sub.updated()) {
 
 		return;
 	}
@@ -139,6 +169,7 @@ void FwAutotuneAttitudeControl::Run()
 
 		if (_vehicle_angular_velocity_sub.copy(&vehicle_angular_velocity)) {
 			_angular_velocity = Vector3f(vehicle_angular_velocity.xyz);
+			_last_angular_velocity = vehicle_angular_velocity.timestamp;
 		}
 	}
 
@@ -148,6 +179,15 @@ void FwAutotuneAttitudeControl::Run()
 		return;
 	}
 
+	const hrt_abstime input_now = hrt_absolute_time();
+
+	if (vehicle_torque_setpoint.timestamp == 0 || vehicle_torque_setpoint.timestamp > input_now
+	    || input_now - vehicle_torque_setpoint.timestamp > 1_s || _last_angular_velocity == 0
+	    || _last_angular_velocity > input_now || input_now - _last_angular_velocity > 1_s) {
+		return;
+	}
+
+	_last_control_input = math::min(vehicle_torque_setpoint.timestamp, _last_angular_velocity);
 	perf_begin(_cycle_perf);
 
 	const hrt_abstime timestamp_sample = vehicle_torque_setpoint.timestamp;
@@ -182,7 +222,6 @@ void FwAutotuneAttitudeControl::Run()
 	}
 
 	if (hrt_elapsed_time(&_last_publish) > _publishing_dt_hrt || _last_publish == 0) {
-		const hrt_abstime now = hrt_absolute_time();
 		updateStateMachine(now);
 
 		Vector<float, 5> coeff = _sys_id.getCoefficients();
@@ -231,7 +270,7 @@ void FwAutotuneAttitudeControl::Run()
 		status.att_p = _attitude_p;
 		rate_sp.copyTo(status.rate_sp);
 		status.state = static_cast<int>(_state);
-		_autotune_attitude_control_status_pub.publish(status);
+		_session.publish(status);
 
 		_last_publish = now;
 	}
@@ -309,8 +348,61 @@ bool FwAutotuneAttitudeControl::isAuxEnableSwitchEnabled()
 	return aux_enable_channel > .5f;
 }
 
+void FwAutotuneAttitudeControl::updateVehicleStatus()
+{
+	if (!_vehicle_status_sub.copy(&_vehicle_status)) {
+		_vehicle_status = {};
+	}
+
+	_armed = (_vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED);
+	_nav_state = _vehicle_status.nav_state;
+}
+
+bool FwAutotuneAttitudeControl::checkAbort(hrt_abstime now)
+{
+	const bool eligible = autotune::eligible(_vehicle_status, vehicle_status_s::VEHICLE_TYPE_FIXED_WING, now);
+	const bool active = _state != state::idle && _state != state::complete && _state != state::fail;
+
+	// Check before apply, wait-for-disarm or test can write gains or complete.
+	if (active && (!eligible || (_state != state::wait_for_disarm
+				     && (_start_flight_mode != _nav_state || (_param_fw_at_man_aux.get() && !_aux_switch_en)
+					 || now - _last_control_input > 1_s)))) {
+		mavlink_log_critical(&_mavlink_log_pub, "Autotune aborted before finishing");
+		abortAutotune(now);
+
+		if (!eligible) {
+			_session.release();
+		}
+
+		return true;
+	}
+
+	if (!eligible) {
+		_vehicle_cmd_start_autotune = false;
+		_want_start_autotune = false;
+
+		if (_session.ownsChannel()) {
+			// A completed attempt may still hold the channel during its result heartbeat.
+			autotune_attitude_control_status_s status{};
+			status.timestamp = now;
+			status.state = static_cast<uint8_t>(_state);
+			_session.publish(status);
+			_session.release();
+		}
+	}
+
+	return false;
+}
+
 void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 {
+	updateVehicleStatus();
+	now = math::max(now, hrt_absolute_time());
+
+	if (checkAbort(now)) {
+		return;
+	}
+
 	// when identifying an axis, check if the estimate has converged
 	const float converged_thr = 1.f;
 
@@ -320,14 +412,26 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	switch (_state) {
 	case state::idle:
 
-		if (_want_start_autotune) {
+		if (_want_start_autotune
+		    && autotune::eligible(_vehicle_status, vehicle_status_s::VEHICLE_TYPE_FIXED_WING, now)
+		    && _session.acquire(now, _start_request_timestamp)) {
 
 			mavlink_log_info(&_mavlink_log_pub, "Autotune started");
 			_state = state::init;
 			_state_start_time = now;
 			_start_flight_mode = _nav_state;
+			_gains_backup_available = false;
+			_last_publish = 0;
+			_last_control_input = now;
+
+			autotune_attitude_control_status_s status{};
+			status.timestamp = now;
+			status.state = static_cast<uint8_t>(_state);
+			_session.publish(status);
 		}
 
+		_vehicle_cmd_start_autotune = false;
+		_want_start_autotune = false;
 		break;
 
 	case state::init:
@@ -520,6 +624,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 
 	case state::test:
 		if ((now - _state_start_time) > 4_s) {
+			_gains_backup_available = false;
 			_state = state::complete;
 			_state_start_time = now;
 
@@ -551,6 +656,13 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 			mavlink_log_info(&mavlink_log_pub, "Autotune returned to idle");
 			_state = state::idle;
 			_vehicle_cmd_start_autotune = false;
+			_want_start_autotune = false;
+
+			autotune_attitude_control_status_s status{};
+			status.timestamp = now;
+			status.state = static_cast<uint8_t>(_state);
+			_session.publish(status);
+			_session.release();
 		}
 
 		break;
@@ -561,19 +673,9 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	if (_state != state::wait_for_disarm && _state != state::idle && _state != state::fail && _state != state::complete) {
 
 		const bool timeout = (now - _state_start_time) > 30_s;
-		const bool mode_changed = (_start_flight_mode != _nav_state);
-		const bool aux_switched_off = (_param_fw_at_man_aux.get() && !_aux_switch_en);
-
 		orb_advert_t mavlink_log_pub = nullptr;
 
-		if (mode_changed || aux_switched_off) {
-			// Abort
-			mavlink_log_critical(&mavlink_log_pub, "Autotune aborted before finishing");
-			_state = state::fail;
-			_start_flight_mode = _nav_state;
-			_state_start_time = now;
-
-		} else if (timeout) {
+		if (timeout) {
 			// Skip to next axis
 			mavlink_log_critical(&mavlink_log_pub, "Autotune axis timeout, skipping to next axis");
 
@@ -602,6 +704,36 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 			_state_start_time = now;
 		}
 	}
+
+	if (_state == state::fail) {
+		revertParamGains();
+	}
+
+	if ((_state == state::fail || _state == state::complete || _state == state::wait_for_disarm)
+	    && (_last_publish == 0 || now - _last_publish > _publishing_dt_hrt)) {
+		// Keep pending application and the result readable if torque input has stopped.
+		autotune_attitude_control_status_s status{};
+		status.timestamp = now;
+		status.state = static_cast<uint8_t>(_state);
+		_session.publish(status);
+		_last_publish = now;
+	}
+}
+
+void FwAutotuneAttitudeControl::abortAutotune(hrt_abstime now)
+{
+	revertParamGains();
+	_state = state::fail;
+	_state_start_time = now;
+	_vehicle_cmd_start_autotune = false;
+	_want_start_autotune = false;
+	_signal_filter.reset(0.f);
+
+	// Publish zero excitation before checkAbort() or the destructor can release the channel.
+	autotune_attitude_control_status_s status{};
+	status.timestamp = now;
+	status.state = static_cast<uint8_t>(_state);
+	_session.publish(status);
 }
 
 void FwAutotuneAttitudeControl::copyGains(int index)
@@ -678,6 +810,7 @@ void FwAutotuneAttitudeControl::revertParamGains()
 {
 	if (_gains_backup_available) {
 		saveGainsToParams();
+		_gains_backup_available = false;
 	}
 }
 

@@ -42,8 +42,13 @@ px4_add_module(
 	MODULE_CONFIG
 		mc_autotune_attitude_control_params.yaml
 	DEPENDS
+		autotune
 		hysteresis
 		mathlib
 		px4_work_queue
 		SystemIdentification
 )
+
+if(CONFIG_MODULES_FW_AUTOTUNE_ATTITUDE_CONTROL AND CONFIG_MODULES_MC_ATT_CONTROL AND CONFIG_MODULES_FW_ATT_CONTROL)
+	px4_add_functional_gtest(SRC AutotuneModuleTest.cpp INCLUDES ../mc_att_control/AttitudeControl LINKLIBS mc_autotune_attitude_control fw_autotune_attitude_control modules__mc_att_control modules__fw_att_control)
+endif()

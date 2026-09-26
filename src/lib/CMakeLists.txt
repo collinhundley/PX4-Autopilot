@@ -34,6 +34,7 @@
 add_subdirectory(adsb EXCLUDE_FROM_ALL)
 add_subdirectory(airspeed EXCLUDE_FROM_ALL)
 add_subdirectory(atmosphere EXCLUDE_FROM_ALL)
+add_subdirectory(autotune EXCLUDE_FROM_ALL)
 add_subdirectory(battery EXCLUDE_FROM_ALL)
 add_subdirectory(button EXCLUDE_FROM_ALL)
 add_subdirectory(cdev EXCLUDE_FROM_ALL)

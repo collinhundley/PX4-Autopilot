@@ -122,6 +122,7 @@ px4_add_module(
 		mavlink_ulog.cpp
 		mavlink_sign_control.cpp
 		MavlinkStatustextHandler.cpp
+		MavlinkAutotune.cpp
 		open_drone_id_translations.cpp
 		tune_publisher.cpp
 	MODULE_CONFIG
@@ -162,6 +163,8 @@ px4_add_unit_gtest(SRC MavlinkStatustextHandlerTest.cpp
 	LINKLIBS
 		modules__mavlink
 	)
+
+px4_add_unit_gtest(SRC MavlinkAutotuneTest.cpp EXTRA_SRCS MavlinkAutotune.cpp)
 
 if(CONFIG_NET AND "${PX4_PLATFORM}" MATCHES "nuttx")
 	target_link_libraries(modules__mavlink PRIVATE nuttx_apps) # netlib_get_ipv4netmask

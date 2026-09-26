@@ -40,6 +40,7 @@
 #pragma once
 
 #include <drivers/drv_hrt.h>
+#include <lib/autotune/Autotune.hpp>
 #include <lib/mathlib/math/filter/AlphaFilter.hpp>
 #include <lib/perf/perf_counter.h>
 #include <lib/pid_design/pid_design.hpp>
@@ -49,8 +50,7 @@
 #include <px4_platform_common/module.h>
 #include <px4_platform_common/module_params.h>
 #include <px4_platform_common/posix.h>
-#include <px4_platform_common/px4_work_queue/WorkItem.hpp>
-#include <uORB/Publication.hpp>
+#include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionCallback.hpp>
 #include <uORB/topics/actuator_controls_status.h>
@@ -73,7 +73,7 @@ enum class SignalType : uint8_t {
 };
 
 class FwAutotuneAttitudeControl : public ModuleBase, public ModuleParams,
-	public px4::WorkItem
+	public px4::ScheduledWorkItem
 {
 public:
 	static Descriptor desc;
@@ -96,6 +96,8 @@ public:
 	int print_status() override;
 
 private:
+	friend class AutotuneModuleTest;
+
 	enum Axes : int32_t {
 		roll = (1 << 0),
 		pitch = (1 << 1),
@@ -107,6 +109,9 @@ private:
 	void checkFilters();
 
 	void updateStateMachine(hrt_abstime now);
+	void updateVehicleStatus();
+	bool checkAbort(hrt_abstime now);
+	void abortAutotune(hrt_abstime now);
 	void updateAmplitudeDetectionState(hrt_abstime now, float rate, float target_rate);
 	void copyGains(int index);
 	bool areGainsGood() const;
@@ -129,7 +134,8 @@ private:
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
 	uORB::Subscription _vehicle_command_sub{ORB_ID(vehicle_command)};
 
-	uORB::PublicationData<autotune_attitude_control_status_s> _autotune_attitude_control_status_pub{ORB_ID(autotune_attitude_control_status)};
+	autotune::Session _session{vehicle_status_s::VEHICLE_TYPE_FIXED_WING};
+	vehicle_status_s _vehicle_status{};
 
 	SystemIdentification _sys_id;
 
@@ -182,6 +188,7 @@ private:
 	bool _aux_switch_en{false};
 	bool _vehicle_cmd_start_autotune{false};
 	bool _want_start_autotune{false};
+	hrt_abstime _start_request_timestamp{0};
 
 	orb_advert_t _mavlink_log_pub{nullptr};
 
@@ -206,6 +213,8 @@ private:
 
 	hrt_abstime _last_run{0};
 	hrt_abstime _last_publish{0};
+	hrt_abstime _last_control_input{0};
+	hrt_abstime _last_angular_velocity{0};
 
 	float _interval_sum{0.f};
 	float _interval_count{0.f};

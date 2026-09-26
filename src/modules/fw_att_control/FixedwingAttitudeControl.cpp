@@ -301,6 +301,8 @@ void FixedwingAttitudeControl::Run()
 						     || pid_autotune.state == autotune_attitude_control_status_s::STATE_PITCH_AMPLITUDE_DETECTION
 						     || pid_autotune.state == autotune_attitude_control_status_s::STATE_YAW_AMPLITUDE_DETECTION
 						     || pid_autotune.state == autotune_attitude_control_status_s::STATE_TEST)
+						    && is_fixed_wing && !_vehicle_status.in_transition_mode
+						    && pid_autotune.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING
 						    && ((hrt_absolute_time() - pid_autotune.timestamp) < 1_s)) {
 
 							bodyrate_autotune_ff = matrix::Vector3f(pid_autotune.rate_sp);

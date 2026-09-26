@@ -1,6 +1,6 @@
 ############################################################################
 #
-#   Copyright (c) 2020-2021 PX4 Development Team. All rights reserved.
+#   Copyright (c) 2026 PX4 Development Team. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,20 +31,4 @@
 #
 ############################################################################
 
-px4_add_module(
-	MODULE fw_autotune_attitude_control
-	MAIN fw_autotune_attitude_control
-	COMPILE_FLAGS
-		${MAX_CUSTOM_OPT_LEVEL}
-	SRCS
-		fw_autotune_attitude_control.cpp
-		fw_autotune_attitude_control.hpp
-	MODULE_CONFIG
-		fw_autotune_attitude_control_params.yaml
-	DEPENDS
-		autotune
-		hysteresis
-		mathlib
-		px4_work_queue
-		SystemIdentification
-)
+px4_add_library(autotune Autotune.cpp)

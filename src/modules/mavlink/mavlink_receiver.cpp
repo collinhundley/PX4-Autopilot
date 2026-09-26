@@ -741,103 +741,34 @@ void MavlinkReceiver::handle_message_command_both(mavlink_message_t *msg, const 
 
 	} else if (cmd_mavlink.command == MAV_CMD_DO_AUTOTUNE_ENABLE) {
 
-		bool has_module = true;
-		autotune_attitude_control_status_s status{};
-		_autotune_attitude_control_status_sub.copy(&status);
-
-		// publish vehicle command once if:
-		// - autotune is not already running
-		// - we are not in transition
-		// - autotune module is enabled
-		if (status.state == autotune_attitude_control_status_s::STATE_IDLE) {
+		if (fabsf(vehicle_command.param1 - 1.f) <= FLT_EPSILON && fabsf(vehicle_command.param2) < FLT_EPSILON) {
 			vehicle_status_s vehicle_status{};
-			_vehicle_status_sub.copy(&vehicle_status);
+			const bool have_vehicle_status = _vehicle_status_sub.copy(&vehicle_status);
+			autotune_attitude_control_status_s status{};
+			const bool have_status = _autotune_attitude_control_status_sub.copy(&status);
+			bool module_supported = false;
 
-			if (!vehicle_status.in_transition_mode) {
-
-				switch (vehicle_status.vehicle_type) {
-				case vehicle_status_s::VEHICLE_TYPE_FIXED_WING:
-					has_module = param_find("FW_AT_APPLY") != PARAM_INVALID;
-					break;
-
-				case vehicle_status_s::VEHICLE_TYPE_ROTARY_WING:
-					has_module = param_find("MC_AT_APPLY") != PARAM_INVALID;
-					break;
-
-				default:
-					has_module = false;
-					break;
-				}
-
-				if (has_module) {
-					_cmd_pub.publish(vehicle_command);
-				}
-			}
-		}
-
-		if (has_module && fabsf(vehicle_command.param1 - 1.f) <= FLT_EPSILON && fabsf(vehicle_command.param2) < FLT_EPSILON) {
-
-			// most are in progress
-			result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS;
-
-			switch (status.state) {
-			case autotune_attitude_control_status_s::STATE_IDLE:
-			case autotune_attitude_control_status_s::STATE_INIT:
-				progress = 0;
+			switch (vehicle_status.vehicle_type) {
+			case vehicle_status_s::VEHICLE_TYPE_FIXED_WING:
+				module_supported = param_find("FW_AT_APPLY") != PARAM_INVALID;
 				break;
 
-			case autotune_attitude_control_status_s::STATE_ROLL_AMPLITUDE_DETECTION:
-			case autotune_attitude_control_status_s::STATE_ROLL:
-			case autotune_attitude_control_status_s::STATE_ROLL_PAUSE:
-				progress = 20;
-				break;
-
-			case autotune_attitude_control_status_s::STATE_PITCH_AMPLITUDE_DETECTION:
-			case autotune_attitude_control_status_s::STATE_PITCH:
-			case autotune_attitude_control_status_s::STATE_PITCH_PAUSE:
-				progress = 40;
-				break;
-
-			case autotune_attitude_control_status_s::STATE_YAW_AMPLITUDE_DETECTION:
-			case autotune_attitude_control_status_s::STATE_YAW:
-			case autotune_attitude_control_status_s::STATE_YAW_PAUSE:
-				progress = 60;
-				break;
-
-			case autotune_attitude_control_status_s::STATE_VERIFICATION:
-				progress = 80;
-				break;
-
-			case autotune_attitude_control_status_s::STATE_APPLY:
-				progress = 85;
-				break;
-
-			case autotune_attitude_control_status_s::STATE_TEST:
-				progress = 90;
-				break;
-
-			case autotune_attitude_control_status_s::STATE_WAIT_FOR_DISARM:
-				progress = 95;
-				break;
-
-			case autotune_attitude_control_status_s::STATE_COMPLETE:
-				progress = 100;
-				// ack it properly with an ACCEPTED once we're done
-				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED;
-				break;
-
-			case autotune_attitude_control_status_s::STATE_FAIL:
-				progress = 0;
-				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_FAILED;
+			case vehicle_status_s::VEHICLE_TYPE_ROTARY_WING:
+				module_supported = param_find("MC_AT_APPLY") != PARAM_INVALID;
 				break;
 			}
 
-		} else if (has_module && (fabsf(vehicle_command.param1 - 1.f) > FLT_EPSILON || fabsf(vehicle_command.param2) > FLT_EPSILON)) {
+			const auto response = _autotune_command.request(hrt_absolute_time(),
+					      have_vehicle_status ? &vehicle_status : nullptr, have_status ? &status : nullptr, module_supported);
+			result = response.result;
+			progress = response.progress;
 
-			result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED;
+			if (response.publish_command) {
+				_cmd_pub.publish(vehicle_command);
+			}
 
 		} else {
-			result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_UNSUPPORTED;
+			result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED;
 		}
 
 		send_ack = true;

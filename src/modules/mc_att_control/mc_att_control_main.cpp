@@ -360,6 +360,8 @@ MulticopterAttitudeControl::Run()
 				     || pid_autotune.state == autotune_attitude_control_status_s::STATE_PITCH
 				     || pid_autotune.state == autotune_attitude_control_status_s::STATE_YAW
 				     || pid_autotune.state == autotune_attitude_control_status_s::STATE_TEST)
+				    && _vehicle_type_rotary_wing && !_vtol_in_transition_mode
+				    && pid_autotune.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING
 				    && ((now - pid_autotune.timestamp) < 1_s)) {
 					rates_sp += Vector3f(pid_autotune.rate_sp);
 				}
