@@ -180,7 +180,7 @@ private:
 	static constexpr float kSignalAmpMax{5.0f};
 	static constexpr float kSignalAmpStep{0.1f};
 
-	matrix::Vector3f _angular_velocity{};
+	matrix::Vector3f _angular_velocity{}; // FW controller frame, including for tailsitters
 
 	bool _armed{false};
 	uint8_t _nav_state{0};

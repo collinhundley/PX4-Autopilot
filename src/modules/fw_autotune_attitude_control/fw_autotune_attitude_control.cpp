@@ -169,6 +169,14 @@ void FwAutotuneAttitudeControl::Run()
 
 		if (_vehicle_angular_velocity_sub.copy(&vehicle_angular_velocity)) {
 			_angular_velocity = Vector3f(vehicle_angular_velocity.xyz);
+
+			// Tailsitter topics use the hover frame; excitation and gains use the FW frame.
+			// Convert only new samples so a cached rate is never rotated twice.
+			if (_vehicle_status.is_vtol_tailsitter) {
+				_angular_velocity = Vector3f(-vehicle_angular_velocity.xyz[2], vehicle_angular_velocity.xyz[1],
+							     vehicle_angular_velocity.xyz[0]);
+			}
+
 			_last_angular_velocity = vehicle_angular_velocity.timestamp;
 		}
 	}
@@ -208,16 +216,23 @@ void FwAutotuneAttitudeControl::Run()
 
 	checkFilters();
 
+	Vector3f torque_setpoint(vehicle_torque_setpoint.xyz);
+
+	if (_vehicle_status.is_vtol_tailsitter) {
+		torque_setpoint = Vector3f(-vehicle_torque_setpoint.xyz[2], vehicle_torque_setpoint.xyz[1],
+					   vehicle_torque_setpoint.xyz[0]);
+	}
+
 	if (_state == state::roll || _state == state::roll_amp_detection) {
-		_sys_id.update(_input_scale * vehicle_torque_setpoint.xyz[0],
+		_sys_id.update(_input_scale * torque_setpoint(0),
 			       _angular_velocity(0));
 
 	} else if (_state == state::pitch || _state == state::pitch_amp_detection) {
-		_sys_id.update(_input_scale * vehicle_torque_setpoint.xyz[1],
+		_sys_id.update(_input_scale * torque_setpoint(1),
 			       _angular_velocity(1));
 
 	} else if (_state == state::yaw || _state == state::yaw_amp_detection) {
-		_sys_id.update(_input_scale * vehicle_torque_setpoint.xyz[2],
+		_sys_id.update(_input_scale * torque_setpoint(2),
 			       _angular_velocity(2));
 	}
 

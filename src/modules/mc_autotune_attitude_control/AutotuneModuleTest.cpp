@@ -83,12 +83,13 @@ protected:
 		_manual.publish(manual);
 	}
 
-	void vehicle(uint8_t type, bool transition = false, bool vtol = true)
+	void vehicle(uint8_t type, bool transition = false, bool vtol = true, bool tailsitter = false)
 	{
 		vehicle_status_s status{};
 		status.timestamp = hrt_absolute_time();
 		status.vehicle_type = type;
 		status.is_vtol = vtol;
+		status.is_vtol_tailsitter = tailsitter;
 		status.in_transition_mode = transition;
 		status.arming_state = vehicle_status_s::ARMING_STATE_ARMED;
 		status.nav_state = vehicle_status_s::NAVIGATION_STATE_POSCTL;
@@ -175,12 +176,14 @@ protected:
 		run();
 	}
 
-	void controllerInputs()
+	void controllerInputs(bool tailsitter = false)
 	{
 		vehicle_attitude_s attitude{};
 		attitude.timestamp = hrt_absolute_time();
 		attitude.timestamp_sample = attitude.timestamp;
-		attitude.q[0] = 1.f;
+		const matrix::Quatf orientation = tailsitter ? matrix::Quatf(matrix::Eulerf(0.f, -M_PI_2_F, 0.f)) :
+						  matrix::Quatf();
+		orientation.copyTo(attitude.q);
 		ASSERT_TRUE(_attitude.publish(attitude));
 		vehicle_attitude_setpoint_s setpoint{};
 		setpoint.timestamp = attitude.timestamp;
@@ -209,6 +212,105 @@ protected:
 	bool ownerStatus(uint8_t type, const Status &status)
 	{
 		return type == MC ? _mc->_session.publish(status) : _fw->_session.publish(status);
+	}
+
+	void checkFwAxisRouting(bool vtol, bool tailsitter)
+	{
+		if (!vtol) {
+			_fw = std::make_unique<FwAutotuneAttitudeControl>(false);
+		}
+
+		int32_t axes = 7;
+		param_set_no_notification(param_find("FW_AT_AXES"), &axes);
+		const float max_rate = 30.f;
+
+		for (const char *name : {"FW_R_RMAX", "FW_P_RMAX_POS", "FW_P_RMAX_NEG", "FW_Y_RMAX"}) {
+			param_set_no_notification(param_find(name), &max_rate);
+		}
+
+		_fw->updateParams();
+		vehicle(FW, false, vtol, tailsitter);
+		command();
+		run();
+		ASSERT_EQ(fwState(), Status::STATE_INIT);
+		FixedwingAttitudeControl controller(vtol);
+		uORB::Subscription rates{ORB_ID(vehicle_rates_setpoint)};
+		auto controller_step = [&]() {
+			controllerInputs(tailsitter);
+			controller.Run();
+			controller.ScheduleClear();
+		};
+		// Populate the controller's cached vehicle status before comparing rates.
+		controller_step();
+		controller_step();
+
+		const uint8_t amplitude_states[] = {Status::STATE_ROLL_AMPLITUDE_DETECTION, Status::STATE_PITCH_AMPLITUDE_DETECTION, Status::STATE_YAW_AMPLITUDE_DETECTION};
+		const uint8_t identification_states[] = {Status::STATE_ROLL, Status::STATE_PITCH, Status::STATE_YAW};
+
+		for (int axis = 0; axis < 3; ++axis) {
+			SCOPED_TRACE(axis);
+
+			for (float sign : {1.f, -1.f}) {
+				SCOPED_TRACE(sign);
+				fwState(amplitude_states[axis]);
+				_fw->_state_start_time = hrt_absolute_time();
+				_fw->_signal_filter.reset(0.f);
+				const matrix::Vector3f excitation = _fw->scaleInputSignal(sign * .5f);
+				Status status{};
+				status.state = amplitude_states[axis];
+				excitation.copyTo(status.rate_sp);
+				ASSERT_TRUE(ownerStatus(FW, status));
+				controller_step();
+				vehicle_rates_setpoint_s setpoint{};
+				ASSERT_TRUE(rates.update(&setpoint));
+				const matrix::Vector3f body_rates(setpoint.roll, setpoint.pitch, setpoint.yaw);
+				const matrix::Vector3f expected_body = tailsitter ? matrix::Vector3f(excitation(2), excitation(1), -excitation(0)) : excitation;
+
+				for (int i = 0; i < 3; ++i) {
+					ASSERT_NEAR(body_rates(i), expected_body(i), 1e-5f);
+				}
+
+				// Use an ideal response to the real controller output to isolate frame
+				// routing from aircraft dynamics. Torque uses the same body frame.
+				vehicle_angular_velocity_s angular{};
+				angular.timestamp = hrt_absolute_time();
+				body_rates.copyTo(angular.xyz);
+				ASSERT_TRUE(_angular.publish(angular));
+				vehicle_torque_setpoint_s torque{};
+				(body_rates * .2f).copyTo(torque.xyz);
+				_fw->_are_filters_initialized = true;
+				_fw->_input_scale = 2.f;
+				_fw->_sample_interval_avg = .0025f;
+				_fw->_sys_id.reset();
+				_fw->_sys_id.setLpfCutoffFrequency(400.f, 30.f);
+				_fw->_sys_id.setHpfCutoffFrequency(400.f, .5f);
+				_fw->_sys_id.setFitnessLpfTimeConstant(1.f, .0025f);
+				_fw->_sys_id.update(0.f, 0.f);
+				_fw->_amplitude_detection_state = FwAutotuneAttitudeControl::amplitudeDetectionState::first_period;
+				_fw->_time_last_amplitude_increase = hrt_absolute_time();
+				_fw->_rate_reached = false;
+
+				SystemIdentification expected;
+				expected.setLpfCutoffFrequency(400.f, 30.f);
+				expected.setHpfCutoffFrequency(400.f, .5f);
+				expected.setFitnessLpfTimeConstant(1.f, .0025f);
+				expected.update(0.f, 0.f);
+
+				// Also enter identification with fresh torque but no new gyro sample:
+				// the cached rate must not be rotated a second time.
+				for (uint8_t state : {amplitude_states[axis], identification_states[axis]}) {
+					fwState(state);
+					torque.timestamp = hrt_absolute_time();
+					ASSERT_TRUE(vtol ? _fw_torque.publish(torque) : _mc_torque.publish(torque));
+					runFw();
+					ASSERT_EQ(fwState(), state);
+					expected.update(excitation(axis) * .2f * 2.f, excitation(axis));
+					EXPECT_NEAR(_fw->_sys_id.getFilteredInputData(), expected.getFilteredInputData(), 1e-5f);
+					EXPECT_NEAR(_fw->_sys_id.getFilteredOutputData(), expected.getFilteredOutputData(), 1e-5f);
+					EXPECT_TRUE(_fw->_rate_reached);
+				}
+			}
+		}
 	}
 
 	float gain(const char *name)
@@ -556,6 +658,21 @@ TEST_F(AutotuneModuleTest, FwExcitationReachesControllerAfterInactiveMcStops)
 	EXPECT_NEAR(setpoint.roll, status.rate_sp[0], 1e-5f);
 	EXPECT_NEAR(setpoint.pitch, status.rate_sp[1], 1e-5f);
 	EXPECT_NEAR(setpoint.yaw, status.rate_sp[2], 1e-5f);
+}
+
+TEST_F(AutotuneModuleTest, FwTailsitterIdentificationAndAmplitudeUseExcitedAxes)
+{
+	checkFwAxisRouting(true, true);
+}
+
+TEST_F(AutotuneModuleTest, FwStandardVtolIdentificationAndAmplitudeUseExcitedAxes)
+{
+	checkFwAxisRouting(true, false);
+}
+
+TEST_F(AutotuneModuleTest, FwStandaloneIdentificationAndAmplitudeUseExcitedAxes)
+{
+	checkFwAxisRouting(false, false);
 }
 
 TEST_F(AutotuneModuleTest, McControllerRejectsPreviousFwExcitation)
