@@ -1,0 +1,22 @@
+module_name: SRXL2 RC Input Driver
+serial_config:
+    - command: "srxl2_rc start -d ${SERIAL_DEV}"
+      port_config_param:
+        name: RC_SRXL2_PRT_CFG
+        group: Serial
+        description_extended: |
+            Spektrum SRXL2 RC input and telemetry on a single-wire UART TX pin.
+            The selected port must not be assigned to MAVLink or another driver.
+            Requires STM32H7 timed half-duplex serial support. Uses 115200 baud.
+
+parameters:
+    - group: RC
+      definitions:
+        RC_SRXL2_TEL_EN:
+            description:
+                short: SRXL2 aircraft telemetry enable
+                long: |
+                    Send standard Spektrum sensor and basic TextGen telemetry.
+                    RC input and required handshake replies remain enabled when disabled.
+            type: boolean
+            default: 1

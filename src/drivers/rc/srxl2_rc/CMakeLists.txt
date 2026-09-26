@@ -1,6 +1,6 @@
 ############################################################################
 #
-#   Copyright (c) 2015-2018 PX4 Development Team. All rights reserved.
+#   Copyright (c) 2026 PX4 Development Team. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,30 +30,19 @@
 # POSSIBILITY OF SUCH DAMAGE.
 #
 ############################################################################
-
-add_library(rc
-	crsf.cpp
-	ghst.cpp
-	st24.cpp
-	sumd.cpp
-	sbus.cpp
-	dsm.cpp
-	common_rc.cpp
+px4_add_module(
+	MODULE drivers__rc__srxl2_rc
+	MAIN srxl2_rc
+	# Leave space for nested uORB/UART calls and interrupt context on the serial work queue.
+	STACK_MAX 384
+	SRCS
+		Srxl2Rc.cpp
+		Srxl2Transport.cpp
+		Srxl2Telemetry.cpp
+	MODULE_CONFIG
+		module.yaml
+	DEPENDS
+		rc
+		srxl2_protocol
+		srxl2_telemetry
 )
-target_compile_options(rc
-	PRIVATE
-		#-DDEBUG_BUILD
-		-Wno-unused-result
-)
-target_link_libraries(rc PRIVATE prebuild_targets)
-
-if(PX4_TESTING AND (${PX4_PLATFORM} MATCHES "posix"))
-	add_subdirectory(rc_tests)
-endif()
-
-if(${PX4_PLATFORM} MATCHES "nuttx")
-	target_link_libraries(rc PRIVATE nuttx_fs)
-endif()
-
-add_subdirectory(srxl2)
-add_subdirectory(srxl2_telemetry)

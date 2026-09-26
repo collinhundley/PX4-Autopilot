@@ -113,6 +113,8 @@ _PX4_ and _Pixhawk_ have been validated with:
 
 Receivers from other vendors that use a supported protocol are likely to work but have not been tested.
 
+Experimental [Spektrum SRXL2 support via TELEM on Pixhawk 6C](../peripherals/spektrum_srxl2.md) requires the documented bench validation before flight.
+
 ::: info
 Historically there were differences and incompatibilities between receiver models, largely due to a lack of detailed specification of protocols.
 The receivers we have tested all now appear to be compatible, but it is possible that others may not be.

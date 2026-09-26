@@ -1,0 +1,7 @@
+menuconfig DRIVERS_RC_SRXL2_RC
+	bool "srxl2_rc"
+	depends on PLATFORM_NUTTX
+	default n
+	---help---
+		Spektrum SRXL2 RC input and telemetry on a half-duplex UART.
+		Requires STM32H7 timed half-duplex serial support.
