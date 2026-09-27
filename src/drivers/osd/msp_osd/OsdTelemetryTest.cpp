@@ -37,6 +37,8 @@ protected:
 		samples.battery.voltage_v = 24.f;
 		samples.battery.cell_count = 6;
 		samples.battery.current_a = 12.f;
+		samples.battery.voltage_v_compensated = 25.2f;
+		samples.battery.remaining = 0.42f;
 		samples.battery.discharged_mah = 400.f;
 		samples.airspeed.airspeed_source = airspeed_validated_s::SOURCE_SENSOR_1;
 		samples.airspeed.indicated_airspeed_m_s = 15.f;
@@ -81,6 +83,9 @@ TEST_F(OsdTelemetryTest, ExtractsIndependentPhysicalQuantities)
 	const auto &data = core.data();
 	EXPECT_FLOAT_EQ(data.battery_voltage, 24.f);
 	EXPECT_FLOAT_EQ(data.cell_voltage, 4.f);
+	EXPECT_FLOAT_EQ(data.compensated_battery_voltage, 25.2f);
+	EXPECT_FLOAT_EQ(data.compensated_cell_voltage, 4.2f);
+	EXPECT_FLOAT_EQ(data.battery_remaining_percent, 42.f);
 	EXPECT_FLOAT_EQ(data.current_a, 12.f);
 	EXPECT_FLOAT_EQ(data.discharged_mah, 400.f);
 	EXPECT_FLOAT_EQ(data.airspeed_m_s, 15.f);
@@ -102,6 +107,9 @@ TEST_F(OsdTelemetryTest, ClearsStaleSensorValuesRatherThanRetainingLastValue)
 	update();
 	const auto &data = core.data();
 	EXPECT_TRUE(std::isnan(data.battery_voltage));
+	EXPECT_TRUE(std::isnan(data.compensated_battery_voltage));
+	EXPECT_TRUE(std::isnan(data.compensated_cell_voltage));
+	EXPECT_TRUE(std::isnan(data.battery_remaining_percent));
 	EXPECT_TRUE(std::isnan(data.current_a));
 	EXPECT_TRUE(std::isnan(data.airspeed_m_s));
 	EXPECT_TRUE(std::isnan(data.ground_speed_m_s));
@@ -141,6 +149,58 @@ TEST_F(OsdTelemetryTest, RejectsMissingFutureAndInvalidBatterySamples)
 	update();
 	EXPECT_TRUE(std::isnan(core.data().current_a));
 	EXPECT_TRUE(std::isnan(core.data().discharged_mah));
+}
+
+TEST_F(OsdTelemetryTest, CompensatedVoltageUsesPublishedSocVoltageWithoutDiagnosticFallback)
+{
+	samples.battery.ocv_estimate_filtered = 30.f;
+	update();
+	EXPECT_FLOAT_EQ(core.data().compensated_battery_voltage, 25.2f);
+	EXPECT_FLOAT_EQ(core.data().compensated_cell_voltage, 4.2f);
+	samples.battery.cell_count = 0;
+	update();
+	EXPECT_FLOAT_EQ(core.data().compensated_battery_voltage, 25.2f);
+	EXPECT_TRUE(std::isnan(core.data().compensated_cell_voltage));
+
+	for (float value : {0.f, -1.f, NAN, INFINITY}) {
+		samples.battery.voltage_v_compensated = value;
+		update();
+		EXPECT_TRUE(std::isnan(core.data().compensated_battery_voltage));
+		EXPECT_TRUE(std::isnan(core.data().compensated_cell_voltage));
+		EXPECT_FLOAT_EQ(core.data().battery_voltage, 24.f);
+	}
+}
+
+TEST_F(OsdTelemetryTest, RemainingUsesReportedFractionIncludingPartialChargeAndEmpty)
+{
+	samples.battery.capacity = 5000;
+	samples.battery.discharged_mah = 0.f;
+	samples.battery.remaining = 0.37f;
+	update();
+	EXPECT_FLOAT_EQ(core.data().battery_remaining_percent, 37.f);
+
+	for (float value : {0.f, 1.f}) {
+		samples.battery.remaining = value;
+		update();
+		EXPECT_FLOAT_EQ(core.data().battery_remaining_percent, value * 100.f);
+	}
+
+	for (float value : {-1.f, 1.01f, NAN, INFINITY}) {
+		samples.battery.remaining = value;
+		update();
+		EXPECT_TRUE(std::isnan(core.data().battery_remaining_percent));
+	}
+
+	samples.battery.remaining = 0.37f;
+	samples.battery.connected = false;
+	update();
+	EXPECT_TRUE(std::isnan(core.data().battery_remaining_percent));
+	EXPECT_TRUE(std::isnan(core.data().compensated_battery_voltage));
+	samples.battery.connected = true;
+	samples.battery.timestamp = now + 1;
+	update();
+	EXPECT_TRUE(std::isnan(core.data().battery_remaining_percent));
+	EXPECT_TRUE(std::isnan(core.data().compensated_battery_voltage));
 }
 
 TEST_F(OsdTelemetryTest, EstimatedAirspeedIsExplicitAndDisabledDoesNotBecomeGroundSpeed)
@@ -529,6 +589,9 @@ TEST_F(OsdTelemetryTest, AdapterConsumesPublishedBatteryStatusAndAutotuneMessage
 
 	adapter.update(now, settings);
 	EXPECT_FLOAT_EQ(adapter.data().battery_voltage, 24.f);
+	EXPECT_FLOAT_EQ(adapter.data().compensated_battery_voltage, 25.2f);
+	EXPECT_FLOAT_EQ(adapter.data().compensated_cell_voltage, 4.2f);
+	EXPECT_FLOAT_EQ(adapter.data().battery_remaining_percent, 42.f);
 	EXPECT_FLOAT_EQ(adapter.data().current_a, 23.f);
 	EXPECT_STREQ(adapter.data().mode, "Return FW");
 	EXPECT_STREQ(adapter.data().message, "FW autotune: sweep");
@@ -539,6 +602,9 @@ TEST_F(OsdTelemetryTest, AdapterConsumesPublishedBatteryStatusAndAutotuneMessage
 	ASSERT_EQ(orb_publish(ORB_ID(battery_status), battery_pub.handle, &samples.battery), 0);
 	adapter.update(now, settings);
 	EXPECT_TRUE(std::isnan(adapter.data().current_a));
+	EXPECT_TRUE(std::isnan(adapter.data().compensated_battery_voltage));
+	EXPECT_TRUE(std::isnan(adapter.data().compensated_cell_voltage));
+	EXPECT_TRUE(std::isnan(adapter.data().battery_remaining_percent));
 	adapter.update(now + 10 * SECOND, settings);
 	EXPECT_STREQ(adapter.data().message, "");
 }

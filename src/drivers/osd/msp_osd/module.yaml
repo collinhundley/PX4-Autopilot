@@ -16,8 +16,10 @@ parameters:
                 long: |
                   Select DisplayPort items. Existing bit numbers are retained.
                   Set zero to clear and release the overlay. Battery and arming
-                  telemetry continue independently. New items use bits 22-26.
+                  telemetry continue independently. New items use bits 22-29.
                   The default hides pitch, roll, vertical speed and coordinates.
+                  The default shows compensated voltages and remaining charge
+                  (bits 27-29); measured voltages remain independently selectable.
             type: bitmask
             bit:
                 0: (unused) PX4_LABEL
@@ -47,7 +49,10 @@ parameters:
                 24: ARTIFICIAL_HORIZON
                 25: MESSAGES
                 26: THROTTLE
-            default: 130834418
+                27: BATT_COMP_VOLTAGE
+                28: BATT_CELL_COMP_VOLTAGE
+                29: BATT_PERC
+            default: 1070882546
 
         OSD_FONT:
             description:

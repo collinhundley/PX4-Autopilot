@@ -30,6 +30,9 @@ Numeric fields show `--` when their source is unavailable, invalid or stale. An 
 | ---- | --------------- |
 | Battery capacity used | Consumed mAh from the primary battery (`battery_status` instance 0), switching to Ah at 10,000 mAh. |
 | Current draw | Current in amperes from the same battery. |
+| Compensated pack voltage | Filtered load-compensated voltage used by PX4's voltage-based state-of-charge calculation (`battery_status.voltage_v_compensated`). |
+| Compensated average cell voltage | The same compensated pack estimate divided by cell count. |
+| Battery remaining | Existing battery state-of-charge estimate (`battery_status.remaining`) as a percentage. |
 | Flight time | Time since Commander's takeoff timestamp, frozen at landing or disarm. The last duration remains until the next takeoff; this is not time since arming or boot. |
 | Flight mode | User-visible navigation mode, with `MC`, `FW`, `>MC` or `>FW` for VTOL state and transitions. |
 | Airspeed | Validated indicated airspeed (IAS). `*` after the airspeed glyph (or `AS*` in Betaflight mode) identifies an estimated source, such as ground speed minus wind or synthetic airspeed. Ground speed is not silently substituted. |
@@ -44,6 +47,19 @@ Additional fields include total pack voltage, average cell voltage, electrical p
 Arming state appears immediately after flight mode as `ARM` or `DIS`; an appended `!` indicates failsafe. The former PX4 label has been removed, with bit 0 reserved to preserve saved masks.
 The RSSI field uses the receiver's RSSI percentage, not its separate link-quality value.
 The `ESC_TMP` bit remains reserved and has no renderer.
+
+Measured pack/cell voltages retain voltage sag; source calibration and filtering may still apply.
+The compensated readings use the exact cell-voltage filter in the battery library, including the configured `BATn_R_INTERNAL` override or estimated resistance when selected.
+This is distinct from the diagnostic `ocv_estimate_filtered`, which always uses estimated resistance.
+No second compensation or filter is applied by the OSD.
+Compensated voltage is unavailable until the battery estimator initialises; battery sources that do not publish it show `--`, without falling back to measured voltage or diagnostic OCV.
+Cell voltage is an average, not an individual-cell measurement.
+
+The existing PX4 remaining-charge estimator initialises from voltage, including a partially charged battery at startup.
+When capacity is configured, it then fuses voltage with integrated current consumption; otherwise it uses the voltage estimate.
+Battery warnings use this state of charge, while smart/external battery sources may supply their own estimate.
+The OSD displays that published estimate directly; it does not calculate `1 - consumed_mAh / capacity` or assume an initially full battery.
+An invalid, stale or disconnected reading is `--%`; a valid empty battery is `0%`.
 
 Messages use a 30-character scrolling window and a bounded four-message queue.
 More severe messages take priority, and `OSD_MSG_TIME` limits their age from publication, including time spent waiting in the queue.
@@ -68,8 +84,16 @@ Current, capacity, voltage, power and angles keep their electrical/angular units
 | `3` | 60 × 22 |
 
 The HD layout spans the full 16:9 canvas, with flight mode and arming state at top left, home information at top center, and flight time aligned to the right edge.
-Airspeed sits to the left of the centered horizon, altitude to the right, and ground speed below airspeed with one blank row between them and aligned units. INAV mode prefixes airspeed with its dedicated airspeed icon; Betaflight mode uses `AS`.
-Throttle sits in the bottom-left corner with its throttle glyph. Battery and cell voltage are combined as `15.3V/3.83V`, centered on the row below consumed capacity and current. These fields form the bottom-center battery group.
+Airspeed sits to the left of the centered horizon, altitude to the right, and ground speed below airspeed with two blank rows between them and aligned units. INAV mode prefixes airspeed with its dedicated airspeed icon; Betaflight mode uses `AS`.
+Throttle sits in the bottom-left corner with its throttle glyph.
+Battery percentage, consumed capacity and current form a centered group on the second-to-last row, in that order.
+A battery glyph immediately precedes the percentage, with its fill level following the reported charge; unavailable charge shows an empty outline with `--%`.
+The group recenters when individual fields are disabled.
+Compensated pack and average cell voltage are combined below it as `C 16.0V/4.00V`, centered on the bottom row.
+Measured voltages remain selectable: they use the row above the battery group when compensated voltage is enabled, or the bottom voltage row otherwise.
+The SAT/RC group at bottom right shares the last two rows, with RC aligned to the voltages and throttle; optional watts sit above throttle.
+On the compact canvas, the battery group uses row 12 (zero-based), with voltages below it and optional measured voltage on row 9 when both pairs are selected.
+If watts are enabled on the compact canvas, the bottom voltage pair shifts right to leave room for them.
 Pitch, roll, vertical speed, latitude and longitude are disabled in the default mask but remain selectable. Additional telemetry occupies the lower rows and right edge. The 50 × 18 canvas uses the same arrangement; narrower canvases use a compact layout.
 For the standard canvas sizes, the driver sends the matching DisplayPort resolution option. Arbitrary negotiated dimensions are respected without overriding them with a different standard profile.
 Field coordinates are predefined rather than individually configurable.
@@ -88,7 +112,8 @@ The driver also sends the matching `BTFL` or `INAV` MSP compatibility identifier
 Units use glyphs for mph, feet/meters, mAh and amps, along with a home icon and directional arrow.
 INAV mode adds the combined altitude/unit glyph and Ah glyph. Betaflight mode uses an `AH` text fallback because its standard font has no Ah glyph.
 The font maps are documented in the [Betaflight glyph reference](https://betaflight.com/docs/development/OSD-Glyps) and [INAV symbol definitions](https://github.com/iNavFlight/inav/blob/master/src/main/drivers/osd_symbols.h).
-Select a matching font in the display when available, and verify glyphs and horizon orientation on the bench. Static horizon sidebars are optional; scrolling speed/altitude tapes are not implemented.
+Select a matching font in the display when available, and verify glyphs and horizon orientation on the bench.
+Static horizon sidebars are enabled by default, with airspeed beside the left bar and altitude beside the right bar; scrolling speed/altitude tapes are not implemented.
 A received canvas announcement or successful UART write does not confirm that a display renders these glyphs correctly.
 
 ### Hardware Setup
@@ -129,7 +154,7 @@ Use the repository's normal build environment for your host OS. Building does no
 2. Assign it to MSP OSD with [`MSP_OSD_CONFIG`](../advanced_config/parameter_reference.md#MSP_OSD_CONFIG).
 3. Reboot.
    The driver sets 115200 baud, 8N1 and no hardware flow control internally; `SER_<PORT>_BAUD` does not override this rate.
-4. Select the desired `OSD_SYMBOLS` fields. The new default is `130834418`, which includes all eleven primary fields above but hides pitch, roll, vertical speed, latitude and longitude. Power and horizon sidebars are optional additions.
+4. Select the desired `OSD_SYMBOLS` fields. The default is `1070882546`, which includes the flight fields, horizon sidebars, compensated pack/cell voltage and remaining battery percentage. Measured voltages, power, pitch, roll, vertical speed, latitude and longitude remain optional.
 5. Set `OSD_UNITS`, `OSD_FONT`, `OSD_CANVAS`, `OSD_CAM_PITCH` and `OSD_CAM_VFOV` for the display and camera.
 6. Leave `OSD_LOG_LEVEL=6` to include autotune progress, and adjust `OSD_MSG_TIME`, `OSD_SCROLL_RATE` and `OSD_DWELL_TIME` as desired.
 7. Leave [`OSD_RC_STICK`](../advanced_config/parameter_reference.md#OSD_RC_STICK) at its default `0` unless VTX stick commands are needed and the RC channel mapping has been checked.
@@ -144,11 +169,18 @@ Existing `OSD_SYMBOLS` bit numbers are retained. The new items use these bits:
 | 24 | Artificial horizon |
 | 25 | Messages |
 | 26 | Throttle percentage |
+| 27 | `BATT_COMP_VOLTAGE` — compensated pack voltage |
+| 28 | `BATT_CELL_COMP_VOLTAGE` — compensated average cell voltage |
+| 29 | `BATT_PERC` — remaining battery percentage |
 
 Flight mode uses the existing bit 14, and other existing bit labels now control their corresponding rendered fields.
 Saved parameter values are not automatically overwritten on upgrade.
-For example, an existing mask of `16383` does not enable flight mode or the five new bits.
-To adopt the new default layout, explicitly set `OSD_SYMBOLS=130834418`; otherwise select the desired bits individually. Prior masks `131039230` and `131039231` retain pitch, roll, vertical speed, latitude and longitude; the former PX4-label bit is ignored.
+For example, an existing mask of `16383` does not enable flight mode or any of bits 22–29.
+To adopt the new default layout, explicitly set `OSD_SYMBOLS=1070882546`; otherwise select the desired bits individually.
+The three new battery items are enabled in this default mask and can be selected independently.
+Use `OSD_SYMBOLS=1071407090` to also show measured voltages above the battery group.
+The prior mask `131882994` shows measured voltages without compensated voltages or percentage; `130834418` also omits sidebars.
+Prior masks `131039230` and `131039231` retain pitch, roll, vertical speed, latitude and longitude; the former PX4-label bit is ignored.
 Also check `OSD_LOG_LEVEL`: an existing saved value of `3` continues to hide INFO/WARNING messages until changed.
 
 Setting `OSD_SYMBOLS=0` clears and releases the overlay. The running driver continues its normal MSP flight-controller identity, battery and arming telemetry independently of the display mask.
@@ -175,7 +207,7 @@ In *QGroundControl*, set the following and reboot:
 | Parameter          | Setting                                   |
 | ------------------ | ----------------------------------------- |
 | `MSP_OSD_CONFIG`   | `102` (TELEM 2)                           |
-| `OSD_SYMBOLS`      | `130834418` (simplified default layout)   |
+| `OSD_SYMBOLS`      | `1070882546` (compensated voltages, percentage and sidebars) |
 | `OSD_UNITS`        | `1` (imperial; choose `0` for metric)     |
 | `OSD_FONT`         | `1` (INAV glyph map for Goggles N3)      |
 | `OSD_CANVAS`       | `0` (auto; 60 × 22 fallback)             |
@@ -220,12 +252,12 @@ In the normal PX4 Linux build environment, the OSD tests can be built and run wi
 
 ```sh
 make px4_sitl_test
-cmake --build build/px4_sitl_test --target unit-MspV1 unit-DisplayPort functional-OsdTelemetry
-ctest --test-dir build/px4_sitl_test --output-on-failure -R '^(unit-(MspV1|DisplayPort)|functional-OsdTelemetry)$'
+cmake --build build/px4_sitl_test --target unit-MspV1 unit-DisplayPort functional-OsdTelemetry functional-Battery
+ctest --test-dir build/px4_sitl_test --output-on-failure -R '^(unit-(MspV1|DisplayPort)|functional-(OsdTelemetry|Battery))$'
 python3 src/drivers/osd/msp_osd/test_displayport.py build/px4_sitl_test
 ```
 
-The C++ tests exercise telemetry validity, timer/message state, rendering and serial packet handling.
+The C++ tests exercise telemetry validity, timer/message state, rendering, serial packet handling, the published compensation filter and partially charged battery initialization.
 The PTY test runs the SITL driver and inspects its emitted MSP/DisplayPort packets.
 These checks do not replace testing the O4/N3 font, canvas and video projection on actual hardware.
 

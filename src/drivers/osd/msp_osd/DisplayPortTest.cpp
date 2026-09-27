@@ -14,7 +14,7 @@ using namespace msp_osd;
 namespace
 {
 constexpr float PI = 3.14159265358979323846f;
-constexpr uint32_t ALL_SYMBOLS = (1u << 27) - 1;
+constexpr uint32_t ALL_SYMBOLS = (1u << 30) - 1;
 
 struct Capture {
 	std::vector<std::vector<uint8_t>> packets;
@@ -106,6 +106,9 @@ OsdData sample()
 	OsdData data;
 	data.battery_voltage = 24.4f;
 	data.cell_voltage = 4.07f;
+	data.compensated_battery_voltage = 25.2f;
+	data.compensated_cell_voltage = 4.2f;
+	data.battery_remaining_percent = 42.f;
 	data.current_a = 12.3f;
 	data.discharged_mah = 1234.f;
 	data.ground_speed_m_s = 10.f;
@@ -145,18 +148,19 @@ TEST(DisplayPort, AllRequestedItemsAndUnits)
 	EXPECT_EQ(capture.line(0).substr(29, 5), "3281\x0f");
 	EXPECT_EQ(capture.line(0).substr(52, 7), "\x9c 01:05");
 	EXPECT_EQ(capture.line(2).substr(1, 14), "AUTOTUNE: ROLL");
-	EXPECT_EQ(capture.line(9).substr(16, 7), "\x70 22.4\x9d");
+	EXPECT_EQ(capture.line(10).substr(16, 7), "\x70 22.4\x9d");
 	EXPECT_EQ(capture.line(8).substr(13, 10), std::string(10, ' '));
+	EXPECT_EQ(capture.line(9).substr(13, 10), std::string(10, ' '));
 	EXPECT_EQ(capture.line(7).substr(18, 5), "44.7\x9d");
 	EXPECT_EQ(capture.line(7).substr(38, 4), "328\x0f");
 	EXPECT_EQ(capture.line(21).substr(1, 5), "\x04 50%");
-	EXPECT_EQ(capture.line(19).substr(26, 11), "24.4V/4.07V");
-	EXPECT_EQ(capture.line(18).substr(25, 5), "1234\x07");
-	EXPECT_EQ(capture.line(18).substr(33, 5), "12.3\x9a");
+	EXPECT_NE(capture.line(21).find("C 25.2V/4.20V"), std::string::npos);
+	EXPECT_NE(capture.line(19).find("24.4V/4.07V"), std::string::npos);
+	EXPECT_EQ(capture.line(20).substr(19, 21), "\x93 42%   1234\x07   12.3\x9a");
 	EXPECT_EQ(capture.screen[0][27], 0x68);
 	settings.imperial = false;
 	ASSERT_TRUE(display.render(sample(), settings));
-	EXPECT_EQ(capture.line(9).substr(16, 7), "\x70 10.0\x9f");
+	EXPECT_EQ(capture.line(10).substr(16, 7), "\x70 10.0\x9f");
 	EXPECT_EQ(capture.line(7).substr(18, 5), "20.0\x9f");
 	EXPECT_EQ(capture.line(7).substr(38, 4), "100\x0c");
 }
@@ -165,7 +169,7 @@ TEST(DisplayPort, MaskBitsAreIndependent)
 {
 	const OsdData data = sample();
 
-	for (unsigned bit = 0; bit <= THROTTLE; ++bit) {
+	for (unsigned bit = 0; bit <= BATT_PERC; ++bit) {
 		Capture capture;
 		DisplayPort display(Capture::write, &capture);
 		DisplaySettings settings;
@@ -182,13 +186,19 @@ TEST(DisplayPort, MaskBitsAreIndependent)
 
 		if (bit != MESSAGES) { EXPECT_EQ(capture.line(2).find("AUTOTUNE"), std::string::npos) << bit; }
 
-		if (bit != CURRENT_DRAW) { EXPECT_EQ(capture.line(18).find("12.3\x9a"), std::string::npos) << bit; }
+		if (bit != CURRENT_DRAW) { EXPECT_EQ(capture.line(20).find("12.3\x9a"), std::string::npos) << bit; }
 
 		if (bit != FLYMODE) { EXPECT_EQ(capture.line(0).find("POSITION"), std::string::npos) << bit; }
 
-		if (bit == MAIN_BATT_VOLTAGE) { EXPECT_EQ(capture.line(19).substr(29, 5), "24.4V"); }
+		if (bit == MAIN_BATT_VOLTAGE) { EXPECT_EQ(capture.line(21).substr(27, 5), "24.4V"); }
 
-		if (bit == AVG_CELL_VOLTAGE) { EXPECT_EQ(capture.line(19).substr(29, 5), "4.07V"); }
+		if (bit == AVG_CELL_VOLTAGE) { EXPECT_EQ(capture.line(21).substr(27, 5), "4.07V"); }
+
+		if (bit == BATT_COMP_VOLTAGE) { EXPECT_NE(capture.line(21).find("C 25.2V"), std::string::npos); }
+
+		if (bit == BATT_CELL_COMP_VOLTAGE) { EXPECT_NE(capture.line(21).find("C 4.20V"), std::string::npos); }
+
+		if (bit == BATT_PERC) { EXPECT_NE(capture.line(20).find("\x93 42%"), std::string::npos); }
 	}
 }
 
@@ -248,11 +258,12 @@ TEST(DisplayPort, CompactCanvasPreservesAllRequestedItems)
 	EXPECT_NE(capture.line(0).find("\x9c 01:05"), std::string::npos);
 	EXPECT_NE(capture.line(1).find("3281\x0f"), std::string::npos);
 	EXPECT_NE(capture.line(2).find("AUTOTUNE: ROLL"), std::string::npos);
-	EXPECT_NE(capture.line(7).find("\x70 22.4\x9d"), std::string::npos);
+	EXPECT_NE(capture.line(8).find("\x70 22.4\x9d"), std::string::npos);
 	EXPECT_NE(capture.line(5).find("44.7\x9d"), std::string::npos);
 	EXPECT_NE(capture.line(5).find("328\x0f"), std::string::npos);
 	EXPECT_EQ(capture.line(15).substr(0, 5), "\x04 50%");
-	EXPECT_EQ(capture.line(13).substr(15, 11), "24.4V/4.07V");
+	EXPECT_NE(capture.line(13).find("C 25.2V/4.20V"), std::string::npos);
+	EXPECT_NE(capture.line(9).find("24.4V/4.07V"), std::string::npos);
 	EXPECT_NE(capture.line(12).find("12.3\x9a"), std::string::npos);
 	EXPECT_NE(capture.line(12).find("1234\x07"), std::string::npos);
 }
@@ -286,11 +297,11 @@ TEST(DisplayPort, InvalidNumbersShowUnavailable)
 	data.throttle_percent = 101.f;
 	data.latitude_deg = 91.0;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_NE(capture.line(9).find("\x70 --\x9d"), std::string::npos);
-	EXPECT_NE(capture.line(18).find("--\x07"), std::string::npos);
-	EXPECT_NE(capture.line(18).find("--\x9a"), std::string::npos);
+	EXPECT_NE(capture.line(10).find("\x70 --\x9d"), std::string::npos);
+	EXPECT_NE(capture.line(20).find("--\x07"), std::string::npos);
+	EXPECT_NE(capture.line(20).find("--\x9a"), std::string::npos);
 	EXPECT_NE(capture.line(21).find("--%"), std::string::npos);
-	EXPECT_NE(capture.line(19).find("--V/--V"), std::string::npos);
+	EXPECT_NE(capture.line(21).find("--V/--V"), std::string::npos);
 	EXPECT_NE(capture.line(17).find("LAT --"), std::string::npos);
 	EXPECT_NE(capture.line(11).find("HORIZON --"), std::string::npos);
 
@@ -309,8 +320,7 @@ TEST(DisplayPort, NumericOverflowDoesNotTruncateToMisleadingValue)
 	OsdData data = sample();
 	data.discharged_mah = 1e9f;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(18).substr(27, 3), "--\x07");
-	EXPECT_EQ(capture.line(18).substr(33, 5), "12.3\x9a");
+	EXPECT_EQ(capture.line(20).substr(24, 11), "--\x07   12.3\x9a");
 }
 
 TEST(DisplayPort, FlightTimerBoundaries)
@@ -494,12 +504,13 @@ TEST(DisplayPort, InavUnitsAndExtendedGlyphPagesMatchN3Map)
 	EXPECT_EQ(capture.screen[0][33], 0x74); // home distance feet
 	EXPECT_EQ(capture.screen[0][52], 0x9f); // flight timer
 	EXPECT_EQ(capture.screen[7][16], 0x8c); // airspeed icon
-	EXPECT_EQ(capture.screen[9][16], 0x17); // ground speed with one blank row below airspeed
+	EXPECT_EQ(capture.screen[10][16], 0x17); // ground speed with two blank rows below airspeed
 	EXPECT_EQ(capture.screen[21][1], 0x95); // throttle icon
 	EXPECT_EQ(capture.screen[7][22], 0x91); // mph
 	EXPECT_EQ(capture.screen[7][41], 0x78); // altitude feet
-	EXPECT_EQ(capture.screen[18][29], 0x99); // mAh
-	EXPECT_EQ(capture.screen[18][37], 0x6a); // amps
+	EXPECT_EQ(capture.screen[20][19], 0x66); // battery level, before percentage
+	EXPECT_EQ(capture.screen[20][31], 0x99); // mAh
+	EXPECT_EQ(capture.screen[20][39], 0x6a); // amps
 	EXPECT_EQ(capture.screen[8][25], 0x150); // horizon, page 1
 	EXPECT_EQ(capture.screen[8][30], 0x166); // reticle, page 1
 	settings.imperial = false;
@@ -534,21 +545,21 @@ TEST(DisplayPort, CapacityChangesToAmpHoursWithoutLosingUnits)
 	OsdData data = sample();
 	data.discharged_mah = 9999.f;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(18).substr(25, 4), "9999");
-	EXPECT_EQ(capture.screen[18][29], 0x99);
+	EXPECT_EQ(capture.line(20).substr(27, 4), "9999");
+	EXPECT_EQ(capture.screen[20][31], 0x99);
 	data.discharged_mah = 10420.f;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(18).substr(24, 5), "10.42");
-	EXPECT_EQ(capture.screen[18][29], 0xd3);
+	EXPECT_EQ(capture.line(20).substr(27, 5), "10.42");
+	EXPECT_EQ(capture.screen[20][32], 0xd3);
 	settings.inav_font = false;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(18).substr(23, 7), "10.42AH"); // No standard Betaflight Ah glyph.
+	EXPECT_EQ(capture.line(20).substr(26, 7), "10.42AH"); // No standard Betaflight Ah glyph.
 	settings.symbols |= (1u << MAIN_BATT_VOLTAGE) | (1u << AVG_CELL_VOLTAGE);
 	settings.columns = capture.columns = 30;
 	settings.rows = capture.rows = 16;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(12).substr(13, 7), "10.42AH");
-	EXPECT_EQ(capture.line(13).substr(15, 11), "24.4V/4.07V");
+	EXPECT_EQ(capture.line(12).substr(11, 7), "10.42AH");
+	EXPECT_EQ(capture.line(13).substr(9, 11), "24.4V/4.07V");
 	data.battery_voltage = NAN;
 	ASSERT_TRUE(display.render(data, settings));
 	EXPECT_NE(capture.line(13).find("--V/4.07V"), std::string::npos);
@@ -557,6 +568,90 @@ TEST(DisplayPort, CapacityChangesToAmpHoursWithoutLosingUnits)
 	ASSERT_TRUE(display.render(data, settings));
 	EXPECT_NE(capture.line(13).find("--V/--V"), std::string::npos);
 	EXPECT_NE(capture.line(12).find("--AH"), std::string::npos);
+}
+
+TEST(DisplayPort, CompensatedVoltageAndPercentageDoNotOverwriteOtherBatteryFields)
+{
+	for (const auto canvas : {std::array<unsigned, 2> {60, 22}, {50, 18}, {30, 16}}) {
+		for (bool inav : {false, true}) {
+			Capture capture;
+			capture.columns = canvas[0];
+			capture.rows = canvas[1];
+			DisplayPort display(Capture::write, &capture);
+			DisplaySettings settings;
+			settings.columns = canvas[0];
+			settings.rows = canvas[1];
+			settings.inav_font = inav;
+			settings.symbols = ALL_SYMBOLS;
+			OsdData data = sample();
+			ASSERT_TRUE(display.render(data, settings));
+			const bool hd = canvas[0] >= 50;
+			const unsigned measured_row = hd ? canvas[1] - 3 : 9;
+			const unsigned compensated_row = hd ? canvas[1] - 1 : 13;
+			const unsigned capacity_row = hd ? canvas[1] - 2 : 12;
+			EXPECT_TRUE(capture.valid);
+			EXPECT_NE(capture.line(measured_row).find("24.4V/4.07V"), std::string::npos);
+			EXPECT_NE(capture.line(compensated_row).find("C 25.2V/4.20V"), std::string::npos);
+			EXPECT_NE(capture.line(capacity_row).find("42%"), std::string::npos);
+			EXPECT_NE(capture.line(capacity_row).find("1234"), std::string::npos);
+			EXPECT_NE(capture.line(capacity_row).find("12.3"), std::string::npos);
+			EXPECT_NE(capture.line(hd ? canvas[1] - 3 : 13).find("300W"), std::string::npos);
+			settings.symbols &= ~((1u << MAIN_BATT_VOLTAGE) | (1u << AVG_CELL_VOLTAGE));
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_NE(capture.line(compensated_row).find("C 25.2V/4.20V"), std::string::npos);
+			EXPECT_EQ(capture.line(measured_row).find("24.4V"), std::string::npos);
+			data.compensated_battery_voltage = NAN;
+			data.compensated_cell_voltage = NAN;
+			data.battery_remaining_percent = NAN;
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_NE(capture.line(compensated_row).find("C --V/--V"), std::string::npos);
+			EXPECT_NE(capture.line(capacity_row).find("--%"), std::string::npos);
+			data.battery_remaining_percent = 0.f;
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_NE(capture.line(capacity_row).find("0%"), std::string::npos);
+		}
+	}
+}
+
+TEST(DisplayPort, BatteryGroupCentersEnabledFieldsAndUsesChargeGlyphs)
+{
+	for (const auto canvas : {std::array<unsigned, 2> {60, 22}, {50, 18}, {30, 16}}) {
+		for (bool inav : {false, true}) {
+			Capture capture;
+			capture.columns = canvas[0];
+			capture.rows = canvas[1];
+			DisplayPort display(Capture::write, &capture);
+			DisplaySettings settings;
+			settings.columns = canvas[0];
+			settings.rows = canvas[1];
+			settings.inav_font = inav;
+			const unsigned row = canvas[0] >= 50 ? canvas[1] - 2 : 12;
+			const std::string gap = canvas[0] >= 50 ? "   " : "  ";
+			OsdData data = sample();
+			const auto expect_centered = [&](const std::string & expected) {
+				const unsigned x = (canvas[0] - expected.size()) / 2;
+				EXPECT_EQ(capture.line(row).substr(0, canvas[0]), std::string(x, ' ') + expected +
+					  std::string(canvas[0] - x - expected.size(), ' '));
+			};
+			settings.symbols = (1u << BATT_PERC) | (1u << MAH_DRAWN) | (1u << CURRENT_DRAW);
+			ASSERT_TRUE(display.render(data, settings));
+			expect_centered(std::string(1, inav ? 0x66 : 0x93) + " 42%" + gap + "1234" +
+					std::string(1, inav ? 0x99 : 0x07) + gap + "12.3" + std::string(1, inav ? 0x6a : 0x9a));
+			settings.symbols = 1u << CURRENT_DRAW;
+			ASSERT_TRUE(display.render(data, settings));
+			expect_centered("12.3" + std::string(1, inav ? 0x6a : 0x9a));
+			settings.symbols = 1u << BATT_PERC;
+			const float percentages[] = {0.f, 50.f, 100.f, NAN};
+			const int levels[] = {6, 3, 0, 6};
+			const char *labels[] = {" 0%", " 50%", " 100%", " --%"};
+
+			for (unsigned i = 0; i < 4; ++i) {
+				data.battery_remaining_percent = percentages[i];
+				ASSERT_TRUE(display.render(data, settings));
+				expect_centered(std::string(1, (inav ? 0x63 : 0x90) + levels[i]) + labels[i]);
+			}
+		}
+	}
 }
 
 TEST(DisplayPort, WideLayoutUsesBothEdgesAndKeepsArmingNextToMode)
@@ -577,6 +672,12 @@ TEST(DisplayPort, WideLayoutUsesBothEdgesAndKeepsArmingNextToMode)
 		EXPECT_EQ(capture.line(0).substr(1, 15), "POSITION FW DIS");
 		EXPECT_EQ(capture.screen[0][canvas[0] - 2], '5'); // Timer reaches the right margin.
 		EXPECT_EQ(capture.line(0).find("PX4"), std::string::npos);
+		EXPECT_NE(capture.line(canvas[1] - 2).find("1234\x07"), std::string::npos);
+		EXPECT_NE(capture.line(canvas[1] - 2).find("12.3\x9a"), std::string::npos);
+		EXPECT_NE(capture.line(canvas[1] - 2).find("SAT 18"), std::string::npos);
+		EXPECT_NE(capture.line(canvas[1] - 1).find("C 25.2V/4.20V"), std::string::npos);
+		EXPECT_NE(capture.line(canvas[1] - 1).find("RC 99%"), std::string::npos);
+		EXPECT_NE(capture.line(canvas[1] - 1).find("\x04 50%"), std::string::npos);
 		memset(data.mode, 'M', sizeof(data.mode));
 		data.armed = true;
 		data.failsafe = true;

@@ -15,13 +15,17 @@ enum SymbolIndex : uint8_t {
 	NUMERICAL_VARIO = 13, FLYMODE = 14, ESC_TMP = 15, PITCH_ANGLE = 16,
 	ROLL_ANGLE = 17, CROSSHAIRS = 18, AVG_CELL_VOLTAGE = 19,
 	HORIZON_SIDEBARS = 20, POWER = 21, FLIGHT_TIME = 22, AIRSPEED = 23,
-	ARTIFICIAL_HORIZON = 24, MESSAGES = 25, THROTTLE = 26
+	ARTIFICIAL_HORIZON = 24, MESSAGES = 25, THROTTLE = 26,
+	BATT_COMP_VOLTAGE = 27, BATT_CELL_COMP_VOLTAGE = 28, BATT_PERC = 29
 };
 
 // SI units internally. NaN means unavailable; renderer must never print NaN/Inf.
 struct OsdData {
 	float battery_voltage{NAN};
 	float cell_voltage{NAN};
+	float compensated_battery_voltage{NAN};
+	float compensated_cell_voltage{NAN};
+	float battery_remaining_percent{NAN};
 	float current_a{NAN};
 	float discharged_mah{NAN};
 	float ground_speed_m_s{NAN};

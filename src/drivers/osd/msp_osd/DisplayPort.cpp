@@ -19,6 +19,8 @@ constexpr int HORIZON_HALF_WIDTH = 5;
 constexpr uint8_t ARROW_SOUTH = 0x60;
 constexpr uint8_t HORIZON_BAR = 0x80; // Nine horizontal strokes, from top to bottom within a cell.
 constexpr uint8_t SIDEBAR = 0x13;
+constexpr uint8_t BATTERY_FULL = 0x90;
+constexpr uint8_t BATTERY_EMPTY = 0x96;
 constexpr uint8_t RETICLE[] = {0x72, 0x73, 0x74};
 constexpr uint8_t HEARTBEAT = 0;
 constexpr uint8_t RELEASE = 1;
@@ -78,6 +80,10 @@ uint16_t DisplayPort::glyph(uint8_t character) const
 
 	if (character >= HORIZON_BAR && character <= HORIZON_BAR + 8) {
 		return 0x14c + character - HORIZON_BAR;
+	}
+
+	if (character >= BATTERY_FULL && character <= BATTERY_EMPTY) {
+		return 0x63 + character - BATTERY_FULL;
 	}
 
 	switch (character) {
@@ -360,9 +366,9 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 	const int center_y = large ? (_rows * 8) / 22 : 6;
 	const int half_height = large ? 3 : 2;
 	const int instruments_y = center_y - 1;
-	const int ground_speed_y = instruments_y + 2; // One blank row between airspeed and ground speed.
+	const int ground_speed_y = instruments_y + 3; // Two blank rows between airspeed and ground speed.
 	const int vario_y = large ? (_rows * 13) / 22 : 10;
-	const int bottom_y = _rows - 4;
+	const int bottom_y = large ? _rows - 2 : _rows - 4;
 	const int home_x = large ? center_x - 4 : 0;
 	const int home_y = large ? 0 : 1;
 	const float distance_scale = settings.imperial ? FEET_PER_METER : 1.f;
@@ -477,60 +483,99 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 	if (enabled(THROTTLE) && !number({left, _rows - 1, 9}, "\x04 ", data.throttle_percent,
 					 0, "%", 0.f, 100.f)) { return false; }
 
-	const int capacity_x = large ? center_x - 9 : 11;
-	const int current_x = large ? center_x + 3 : 22;
-	const int current_width = large ? 9 : 8;
+	// Center only the enabled, formatted fields, with percentage before capacity/current.
+	char remaining[7] {};
+	char capacity[10] {};
+	char current[9] {};
 
-	// Center the voltage pair beneath the combined capacity/current field area.
-	char pack_voltage[8] {};
-	char cell_voltage[8] {};
-	char voltage_pair[MAX_TEXT + 1];
-	const bool pack_enabled = enabled(MAIN_BATT_VOLTAGE);
-	const bool cell_enabled = enabled(AVG_CELL_VOLTAGE);
-
-	if (pack_enabled) {
-		format_number(pack_voltage, sizeof(pack_voltage), 7, "", data.battery_voltage, 1, "V", 0.f, 999.f);
+	if (enabled(BATT_PERC)) {
+		const float percentage = data.battery_remaining_percent;
+		const uint8_t battery_icon = finite_range(percentage, 0.f, 100.f)
+					     ? BATTERY_FULL + static_cast<uint8_t>(roundf((100.f - percentage) * (BATTERY_EMPTY - BATTERY_FULL) / 100.f))
+					     : BATTERY_EMPTY;
+		const char prefix[] = {static_cast<char>(battery_icon), ' ', '\0'};
+		format_number(remaining, sizeof(remaining), 6, prefix, percentage, 0, "%", 0.f, 100.f);
 	}
-
-	if (cell_enabled) {
-		format_number(cell_voltage, sizeof(cell_voltage), 7, "", data.cell_voltage, 2, "V", 0.f, 9.99f);
-	}
-
-	snprintf(voltage_pair, sizeof(voltage_pair), "%s%s%s", pack_voltage,
-		 pack_enabled && cell_enabled ? "/" : "", cell_voltage);
-	const int voltage_length = strlen(voltage_pair);
-	const int battery_width = current_x + current_width - capacity_x;
-	const int voltage_x = capacity_x + (battery_width - voltage_length) / 2;
 
 	if (enabled(MAH_DRAWN)) {
 		const bool amp_hours = finite_range(data.discharged_mah, 10000.f, 1e8f);
 		const char *unit = amp_hours ? (_inav_font ? "\xf3" : "AH") : "\x07";
-
-		if (!number({capacity_x, bottom_y, 9}, "", data.discharged_mah / (amp_hours ? 1000.f : 1.f),
-			    amp_hours ? 2 : 0, unit, 0.f, 1e8f, true)) { return false; }
+		format_number(capacity, sizeof(capacity), 9, "", data.discharged_mah / (amp_hours ? 1000.f : 1.f),
+			      amp_hours ? 2 : 0, unit, 0.f, 1e8f);
 	}
 
-	if (voltage_length > 0 && !formatted({voltage_x, bottom_y + 1, voltage_length}, voltage_pair)) { return false; }
+	if (enabled(CURRENT_DRAW)) {
+		format_number(current, sizeof(current), 8, "", data.current_a, 1, "\x9a", 0.f, 9999.f);
+	}
 
-	if (enabled(CURRENT_DRAW) && !number({current_x, bottom_y, current_width}, "", data.current_a,
-					     1, "\x9a", 0.f, 9999.f)) { return false; }
+	const char *gap = large ? "   " : "  ";
+	char battery_group[MAX_TEXT + 1];
+	snprintf(battery_group, sizeof(battery_group), "%s%s%s%s%s", remaining,
+		 remaining[0] && (capacity[0] || current[0]) ? gap : "", capacity,
+		 capacity[0] && current[0] ? gap : "", current);
+	const int battery_length = strlen(battery_group);
 
-	if (enabled(PITCH_ANGLE) && !number({left, large ? bottom_y - 2 : 11, 13}, "P ", data.pitch_rad * DEGREES,
+	if (battery_length > 0 && !formatted({(_columns - battery_length) / 2, bottom_y, battery_length}, battery_group)) { return false; }
+
+	const bool compensated_voltage_enabled = enabled(BATT_COMP_VOLTAGE) || enabled(BATT_CELL_COMP_VOLTAGE);
+
+	for (int kind = 0; kind < 2; ++kind) {
+		const bool compensated = kind == 1;
+		const bool pack_enabled = enabled(compensated ? BATT_COMP_VOLTAGE : MAIN_BATT_VOLTAGE);
+		const bool cell_enabled = enabled(compensated ? BATT_CELL_COMP_VOLTAGE : AVG_CELL_VOLTAGE);
+
+		if (!pack_enabled && !cell_enabled) { continue; }
+
+		char pack_voltage[8] {};
+		char cell_voltage[8] {};
+		char voltage_pair[MAX_TEXT + 1];
+
+		if (pack_enabled) {
+			format_number(pack_voltage, sizeof(pack_voltage), 7, "",
+				      compensated ? data.compensated_battery_voltage : data.battery_voltage, 1, "V", 0.f, 999.f);
+		}
+
+		if (cell_enabled) {
+			format_number(cell_voltage, sizeof(cell_voltage), 7, "",
+				      compensated ? data.compensated_cell_voltage : data.cell_voltage, 2, "V", 0.f, 9.99f);
+		}
+
+		snprintf(voltage_pair, sizeof(voltage_pair), "%s%s%s%s", compensated ? "C " : "", pack_voltage,
+			 pack_enabled && cell_enabled ? "/" : "", cell_voltage);
+		const int voltage_length = strlen(voltage_pair);
+		int voltage_x = (_columns - voltage_length) / 2;
+		int voltage_y = bottom_y + 1;
+
+		// Compensated readings own the bottom row. Optional raw readings move above
+		// the group when both are selected; the compact canvas has a spare row at 9.
+		if (!compensated && compensated_voltage_enabled) {
+			voltage_y = large ? bottom_y - 1 : 9;
+		}
+
+		if (!large && voltage_y == bottom_y + 1 && enabled(POWER)) {
+			// Leave the compact canvas's optional watts field unobstructed.
+			voltage_x = 11 + (_columns - 11 - voltage_length) / 2;
+		}
+
+		if (!formatted({voltage_x, voltage_y, voltage_length}, voltage_pair)) { return false; }
+	}
+
+	if (enabled(PITCH_ANGLE) && !number({left, large ? _rows - 6 : 11, 13}, "P ", data.pitch_rad * DEGREES,
 					    0, "DEG", -180.f, 180.f)) { return false; }
 
-	if (enabled(ROLL_ANGLE) && !number({_columns - 14, large ? bottom_y - 2 : 11, 13}, "R ", data.roll_rad * DEGREES,
+	if (enabled(ROLL_ANGLE) && !number({_columns - 14, large ? _rows - 6 : 11, 13}, "R ", data.roll_rad * DEGREES,
 					   0, "DEG", -180.f, 180.f, true)) { return false; }
 
 	const float power = finite_range(data.current_a, 0.f, 9999.f) && finite_range(data.battery_voltage, 0.f, 999.f)
 			    ? data.current_a * data.battery_voltage : NAN;
 
-	if (enabled(POWER) && !number(position({30, _rows - 2, 10}, {0, 13, 10}), "", power,
+	if (enabled(POWER) && !number(position({left, _rows - 3, 10}, {0, 13, 10}), "", power,
 				      0, "W", 0.f, 1e7f)) { return false; }
 
-	if (enabled(RSSI_VALUE) && !number({_columns - 12, large ? _rows - 2 : 15, 11}, "RC ", data.rssi_percent,
+	if (enabled(RSSI_VALUE) && !number({_columns - 12, large ? _rows - 1 : 15, 11}, "RC ", data.rssi_percent,
 					   0, "%", 0.f, 100.f, true)) { return false; }
 
-	if (enabled(GPS_SATS) && !number({_columns - 9, large ? _rows - 3 : 1, 8}, "SAT ", data.satellites,
+	if (enabled(GPS_SATS) && !number({_columns - 9, large ? _rows - 2 : 1, 8}, "SAT ", data.satellites,
 					 0, "", 0.f, 255.f, true)) { return false; }
 
 	// Retain double precision until formatting GNSS coordinates.
@@ -549,7 +594,7 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 			}
 
 			const int width = large ? _columns / 2 - 2 : 15;
-			const Position location {axis == 0 ? left : _columns - width - left, large ? bottom_y - 1 : 14, width};
+			const Position location {axis == 0 ? left : _columns - width - left, large ? _rows - 5 : 14, width};
 
 			if (!formatted(location, buffer, axis == 1)) { return false; }
 		}

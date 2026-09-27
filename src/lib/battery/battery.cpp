@@ -168,6 +168,12 @@ battery_status_s Battery::getBatteryStatus()
 {
 	battery_status_s battery_status{};
 	battery_status.voltage_v = _voltage_v;
+	// Publish the exact filter used by calculateStateOfChargeVoltageBased(),
+	// including a configured resistance override. The diagnostic OCV filter
+	// always uses estimated resistance and can differ from this value.
+	const float compensated_voltage = _cell_voltage_filter_v.getState() * _params.n_cells;
+	battery_status.voltage_v_compensated = _connected && _battery_initialized && _params.n_cells > 0
+					       && PX4_ISFINITE(compensated_voltage) && compensated_voltage > 0.f ? compensated_voltage : 0.f;
 	battery_status.current_a = _current_a;
 	battery_status.current_average_a = _current_average_filter_a.getState();
 	battery_status.discharged_mah = _discharged_mah;

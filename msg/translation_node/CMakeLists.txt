@@ -58,6 +58,7 @@ if(BUILD_TESTING)
 
   # Unit tests
   set(TEST_SRC
+          test/battery_status.cpp
           test/graph.cpp
           test/main.cpp
           test/pub_sub.cpp

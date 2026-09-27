@@ -61,6 +61,20 @@ void OsdTelemetryCore::update(uint64_t now, const Samples &s, const Settings &se
 			_data.current_a = s.battery.current_a;
 		}
 
+		if (std::isfinite(s.battery.voltage_v_compensated) && s.battery.voltage_v_compensated > 0.f) {
+			_data.compensated_battery_voltage = s.battery.voltage_v_compensated;
+
+			if (s.battery.cell_count > 0) {
+				_data.compensated_cell_voltage = s.battery.voltage_v_compensated / s.battery.cell_count;
+			}
+		}
+
+		// Use the battery source's existing state of charge, including partial-charge
+		// initialization. Do not recompute it from consumed mAh or OCV in the OSD.
+		if (std::isfinite(s.battery.remaining) && s.battery.remaining >= 0.f && s.battery.remaining <= 1.f) {
+			_data.battery_remaining_percent = s.battery.remaining * 100.f;
+		}
+
 		if (std::isfinite(s.battery.discharged_mah) && s.battery.discharged_mah >= 0.f) {
 			_data.discharged_mah = s.battery.discharged_mah;
 		}

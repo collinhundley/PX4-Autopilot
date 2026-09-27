@@ -4,7 +4,7 @@
 # These are populated from power module and smart battery device drivers, and one battery updated from MAVLink.
 # Battery instance information is also logged and streamed in MAVLink telemetry.
 
-uint32 MESSAGE_VERSION = 2
+uint32 MESSAGE_VERSION = 1
 uint8 MAX_INSTANCES = 3
 
 uint64 timestamp # [us] Time since system start
@@ -76,5 +76,3 @@ float32 volt_based_soc_estimate # [-] [@range 0, 1] Normalized volt based state 
 float32 voltage_prediction # [V] Predicted voltage
 float32 prediction_error # [V] Prediction error
 float32 estimation_covariance_norm # [-] Norm of the covariance matrix
-
-float32 voltage_v_compensated # [V] [@invalid 0] Filtered load-compensated pack voltage used by voltage-based state of charge; honours configured internal resistance. Unavailable before initialization or when not provided by the battery source.

@@ -22,26 +22,29 @@ import tempfile
 import time
 
 
-FULL_MASK = ((1 << 27) - 1) & ~(1 << 15)  # ESC temperature remains unsupported.
+FULL_MASK = ((1 << 30) - 1) & ~(1 << 15)  # ESC temperature remains unsupported.
 ALTITUDE_MASK = 1 << 12
 POSITIONS = {
     (60, 22): {
         "mode": (1, 0, 25), "time": (49, 0, 10), "home_arrow": (27, 0),
-        "home": (29, 0, 12), "ground_speed": (13, 9, 10), "airspeed": (13, 7, 10),
-        "altitude": (38, 7, 22), "throttle": (1, 21, 9), "mah": (21, 18, 9), "voltage": (21, 19, 21),
-        "current": (33, 18, 9), "horizon": (30, 8),
+        "home": (29, 0, 12), "ground_speed": (13, 10, 10), "airspeed": (13, 7, 10),
+        "altitude": (38, 7, 22), "throttle": (1, 21, 9), "voltage": (15, 19, 30),
+        "battery_group": (15, 20, 30), "horizon": (30, 8),
+        "compensated_voltage": (15, 21, 30),
     },
     (50, 18): {
         "mode": (1, 0, 20), "time": (39, 0, 10), "home_arrow": (22, 0),
-        "home": (24, 0, 12), "ground_speed": (8, 7, 10), "airspeed": (8, 5, 10),
-        "altitude": (33, 5, 17), "throttle": (1, 17, 9), "mah": (16, 14, 9), "voltage": (16, 15, 21),
-        "current": (28, 14, 9), "horizon": (25, 6),
+        "home": (24, 0, 12), "ground_speed": (8, 8, 10), "airspeed": (8, 5, 10),
+        "altitude": (33, 5, 17), "throttle": (1, 17, 9), "voltage": (10, 15, 30),
+        "battery_group": (10, 16, 30), "horizon": (25, 6),
+        "compensated_voltage": (10, 17, 30),
     },
     (30, 16): {
         "mode": (0, 0, 18), "time": (19, 0, 10), "home_arrow": (1, 1),
-        "home": (3, 1, 16), "ground_speed": (0, 7, 8), "airspeed": (0, 5, 8),
-        "altitude": (23, 5, 7), "throttle": (0, 15, 9), "mah": (11, 12, 9), "voltage": (11, 13, 19),
-        "current": (22, 12, 8), "horizon": (15, 6),
+        "home": (3, 1, 16), "ground_speed": (0, 8, 8), "airspeed": (0, 5, 8),
+        "altitude": (23, 5, 7), "throttle": (0, 15, 9), "voltage": (0, 9, 30),
+        "battery_group": (0, 12, 30), "horizon": (15, 6),
+        "compensated_voltage": (11, 13, 19),
     },
 }
 
@@ -146,6 +149,8 @@ def check_fields(grid, writes, canvas, imperial, inav=False):
     throttle_icon = chr(0x95 if inav else 0x04)
     speed_icon = chr(0x17 if inav else 0x70)
     airspeed_prefix = chr(0x8c) + r" \*?" if inav else r"AS(?: |\*)"
+    battery_icon = f"[{chr(0x63)}-{chr(0x69)}]" if inav else f"[{chr(0x90)}-{chr(0x96)}]"
+    gap = "   " if canvas[0] >= 50 else "  "
     scalar = r"(?:--|-?\d+(?:\.\d+)?)"
     patterns = {
         "home": rf"{scalar}{distance}",
@@ -153,9 +158,9 @@ def check_fields(grid, writes, canvas, imperial, inav=False):
         "airspeed": rf"{airspeed_prefix}{scalar}{speed}",
         "altitude": rf"{scalar}{altitude}",
         "throttle": rf"{throttle_icon} {scalar}%",
-        "mah": rf"{scalar}{mah}",
         "voltage": rf"{scalar}V/{scalar}V",
-        "current": rf"{scalar}{amps}",
+        "compensated_voltage": rf"C {scalar}V/{scalar}V",
+        "battery_group": rf"{battery_icon} {scalar}%{gap}{scalar}{mah}{gap}{scalar}{amps}",
     }
     for name, pattern in patterns.items():
         text = region(grid, positions[name])
