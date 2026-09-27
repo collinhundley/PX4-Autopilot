@@ -38,6 +38,9 @@ px4_add_module(
 	MAIN msp_osd
 	SRCS
 		msp_osd.cpp
+		msp_osd_display.cpp
+		OsdTelemetry.cpp
+		DisplayPort.cpp
 		MspV1.cpp
 		uorb_to_msp.cpp
 	MODULE_CONFIG
@@ -45,4 +48,9 @@ px4_add_module(
 	DEPENDS
 		message_display
 		px4_work_queue
+		geo
 	)
+
+px4_add_unit_gtest(SRC MspV1Test.cpp EXTRA_SRCS MspV1.cpp)
+px4_add_unit_gtest(SRC DisplayPortTest.cpp EXTRA_SRCS DisplayPort.cpp)
+px4_add_functional_gtest(SRC OsdTelemetryTest.cpp LINKLIBS drivers__osd__msp_osd geo)

@@ -137,7 +137,7 @@ MspOsd::MspOsd(const char *device) :
 	_display.set_dwell(_param_osd_dwell_time.get() * 1000ULL);
 
 	// back up device name for connection later
-	strcpy(_device, device);
+	strncpy(_device, device, sizeof(_device) - 1);
 
 	// _is_initialized = true;
 	PX4_INFO("MSP OSD running on %s", _device);
@@ -145,6 +145,9 @@ MspOsd::MspOsd(const char *device) :
 
 MspOsd::~MspOsd()
 {
+	if (_msp_fd >= 0) {
+		close(_msp_fd);
+	}
 }
 
 bool MspOsd::init()
@@ -247,6 +250,22 @@ void MspOsd::SendConfig()
 void MspOsd::Run()
 {
 	if (should_exit()) {
+		if (_is_initialized) {
+			if (_stop_started == 0) {
+				_stop_started = hrt_absolute_time();
+			}
+
+			if (!_stop_release_queued) {
+				_stop_release_queued = _renderer.release();
+			}
+
+			_msp.Flush();
+
+			if ((!_stop_release_queued || _msp.pending_bytes() != 0) && hrt_elapsed_time(&_stop_started) < 500_ms) {
+				return;
+			}
+		}
+
 		ScheduleClear();
 		exit_and_cleanup(desc);
 		return;
@@ -263,23 +282,37 @@ void MspOsd::Run()
 
 	// perform first time initialization, if needed
 	if (!_is_initialized) {
-		struct termios t;
-		_msp_fd = open(_device, O_RDWR | O_NONBLOCK);
+		struct termios t {};
+		_msp_fd = open(_device, O_RDWR | O_NONBLOCK | O_NOCTTY);
 
 		if (_msp_fd < 0) {
 			_performance_data.initialization_problems = true;
 			return;
 		}
 
-		tcgetattr(_msp_fd, &t);
+		if (tcgetattr(_msp_fd, &t) != 0) {
+			_performance_data.initialization_problems = true;
+			close(_msp_fd);
+			_msp_fd = -1;
+			return;
+		}
+
+		cfmakeraw(&t);
 		cfsetspeed(&t, B115200);
-		t.c_cflag &= ~(CSTOPB | PARENB | CRTSCTS);
+		t.c_cflag &= ~(CSTOPB | PARENB | CRTSCTS | CSIZE);
+		t.c_cflag |= CS8 | CLOCAL | CREAD;
 		t.c_lflag &= ~(ECHO | ECHONL | ICANON | IEXTEN | ISIG);
 		t.c_iflag &= ~(IGNBRK | BRKINT | ICRNL | INLCR | PARMRK | INPCK | ISTRIP | IXON);
 		t.c_oflag = 0;
-		tcsetattr(_msp_fd, TCSANOW, &t);
 
-		_msp = MspV1(_msp_fd);
+		if (tcsetattr(_msp_fd, TCSANOW, &t) != 0) {
+			_performance_data.initialization_problems = true;
+			close(_msp_fd);
+			_msp_fd = -1;
+			return;
+		}
+
+		_msp.SetFileDescriptor(_msp_fd);
 
 		_is_initialized = true;
 	}
@@ -297,178 +330,12 @@ void MspOsd::Run()
 
 	this->Receive();
 
-	if (!has_vtx_config) {
+	if (!has_vtx_config && hrt_elapsed_time(&_last_vtx_request) >= 1_s && _msp.pending_bytes() == 0) {
 		this->Send(MSP_GET_VTX_CONFIG, nullptr, 0);
+		_last_vtx_request = hrt_absolute_time();
 	}
 
-	// avoid premature pessimization; if skip processing if we're effectively disabled
-	if (_param_osd_symbols.get() == 0) {
-		return;
-	}
-
-	uint8_t subcmd = MSP_DP_HEARTBEAT;
-	this->Send(MSP_CMD_DISPLAYPORT, &subcmd, 1);
-
-	subcmd = MSP_DP_CLEAR_SCREEN;
-	this->Send(MSP_CMD_DISPLAYPORT, &subcmd, 1);
-
-	// update display message
-	{
-		vehicle_status_s vehicle_status{};
-		_vehicle_status_sub.copy(&vehicle_status);
-
-		vehicle_attitude_s vehicle_attitude{};
-		_vehicle_attitude_sub.copy(&vehicle_attitude);
-
-		log_message_s log_message{};
-		_log_message_sub.copy(&log_message);
-		// TODO re-wirte this function?
-		const auto display_message = msp_osd::construct_display_message(
-						     vehicle_status,
-						     vehicle_attitude,
-						     log_message,
-						     _param_osd_log_level.get(),
-						     _display);
-
-		char msg[sizeof(msp_name_t) + 5] = {0};
-		int index = 0;
-		msg[index++] = MSP_DP_WRITE_STRING;
-		msg[index++] = 0x02; // row position
-		msg[index++] = 0x14; // colum position
-		msg[index++] = 0;		// Icon attr
-		msg[index++] = 0x03; // Icon index >
-		memcpy(&msg[index++], &display_message, sizeof(msp_name_t));
-		this->Send(MSP_CMD_DISPLAYPORT, &msg, sizeof(msg));
-	}
-
-	// MSP_FC_VARIANT
-	{
-		const auto msg = msp_osd::construct_FC_VARIANT();
-		this->Send(MSP_FC_VARIANT, &msg, sizeof(msg));
-	}
-
-	// MSP_ANALOG
-	{
-		if (enabled(SymbolIndex::RSSI_VALUE)) {
-			input_rc_s input_rc{};
-			_input_rc_sub.copy(&input_rc);
-			const auto msg = msp_osd::construct_rendor_RSSI(input_rc);
-			this->Send(MSP_CMD_DISPLAYPORT, &msg, sizeof(msp_rendor_rssi_t));
-		}
-	}
-
-	// MSP_BATTERY_STATE
-	{
-		battery_status_s battery_status{};
-		_battery_status_sub.copy(&battery_status);
-
-		const auto msg_original = msp_osd::construct_BATTERY_STATE(battery_status);
-		this->Send(MSP_BATTERY_STATE, &msg_original);
-
-		const auto msg = msp_osd::construct_rendor_BATTERY_STATE(battery_status);
-		this->Send(MSP_CMD_DISPLAYPORT, &msg, sizeof(msp_rendor_battery_state_t));
-
-	}
-
-	// MSP_RAW_GPS
-	{
-		sensor_gps_s vehicle_gps_position{};
-		_vehicle_gps_position_sub.copy(&vehicle_gps_position);
-
-		if (enabled(SymbolIndex::GPS_LAT)) {
-			const auto msg = msp_osd::construct_rendor_GPS_LAT(vehicle_gps_position);
-			this->Send(MSP_CMD_DISPLAYPORT, &msg, sizeof(msp_rendor_latitude_t));
-		}
-
-		if (enabled(SymbolIndex::GPS_LON)) {
-			const auto msg = msp_osd::construct_rendor_GPS_LON(vehicle_gps_position);
-			this->Send(MSP_CMD_DISPLAYPORT, &msg, sizeof(msp_rendor_longitude_t));
-		}
-
-		if (enabled(SymbolIndex::GPS_SATS)) {
-			const auto msg = msp_osd::construct_rendor_GPS_NUM(vehicle_gps_position);
-			this->Send(MSP_CMD_DISPLAYPORT, &msg, sizeof(msp_rendor_satellites_used_t));
-		}
-	}
-
-	// MSP_COMP_GPS
-	{
-		home_position_s home_position{};
-		_home_position_sub.copy(&home_position);
-
-		vehicle_global_position_s vehicle_global_position{};
-		_vehicle_global_position_sub.copy(&vehicle_global_position);
-
-		if (enabled(SymbolIndex::HOME_DIST)) {
-			const auto msg =  msp_osd::construct_rendor_distanceToHome(home_position, vehicle_global_position);
-
-			this->Send(MSP_CMD_DISPLAYPORT, &msg, sizeof(msp_rendor_distanceToHome_t));
-		}
-	}
-
-	// MSP_ATTITUDE
-	{
-		vehicle_attitude_s vehicle_attitude{};
-		_vehicle_attitude_sub.copy(&vehicle_attitude);
-
-		{
-			const auto msg = msp_osd::construct_rendor_PITCH(vehicle_attitude);
-			this->Send(MSP_CMD_DISPLAYPORT, &msg, sizeof(msp_rendor_pitch_t));
-		}
-		{
-			const auto msg = msp_osd::construct_rendor_ROLL(vehicle_attitude);
-			this->Send(MSP_CMD_DISPLAYPORT, &msg, sizeof(msp_rendor_roll_t));
-		}
-	}
-
-
-	// MSP_ALTITUDE
-	{
-		sensor_gps_s vehicle_gps_position{};
-		_vehicle_gps_position_sub.copy(&vehicle_gps_position);
-
-		vehicle_local_position_s vehicle_local_position{};
-		_vehicle_local_position_sub.copy(&vehicle_local_position);
-
-		if (enabled(SymbolIndex::ALTITUDE)) {
-			const auto msg = msp_osd::construct_Rendor_ALTITUDE(vehicle_gps_position, vehicle_local_position);
-
-			this->Send(MSP_CMD_DISPLAYPORT, &msg, sizeof(msg));
-		}
-	}
-
-	// MSP_MOTOR_TELEMETRY
-	{
-
-	}
-
-	// MSP_RC
-	{
-		if (_param_osd_rc_stick.get() == 1) {
-			vehicle_status_s vehicle_status{};
-			_vehicle_status_sub.copy(&vehicle_status);
-
-			if (vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
-				input_rc_s input_rc{};
-				_input_rc_sub.copy(&input_rc);
-				const auto msg = msp_osd::construct_MSP_RC(input_rc);
-				this->Send(MSP_RC, &msg, sizeof(msp_rc_t));
-			}
-		}
-
-	}
-
-	// MSP_STATUS
-	{
-		vehicle_status_s vehicle_status{};
-		_vehicle_status_sub.copy(&vehicle_status);
-
-		const auto msg = msp_osd::construct_MSP_STATUS(vehicle_status);
-		this->Send(MSP_STATUS, &msg, sizeof(msp_status_t));
-	}
-
-	subcmd = MSP_DP_DRAW_SCREEN;
-	this->Send(MSP_CMD_DISPLAYPORT, &subcmd, 1);
+	SendDisplay(hrt_absolute_time());
 }
 
 void MspOsd::Send(const unsigned int message_type, const void *payload)
@@ -492,16 +359,39 @@ void MspOsd::Send(const unsigned int message_type, const void *payload, int32_t 
 
 void MspOsd::Receive()
 {
-	uint8_t packet[255];
-	uint8_t message_id;
-	int ret;
+	uint8_t packet[MspV1::MAX_PAYLOAD_SIZE] {};
+	uint8_t message_id{};
 
-	while ((ret = _msp.Receive(packet, &message_id)) != -EWOULDBLOCK) {
+	// Bound work even when a peripheral continuously sends malformed packets.
+	for (unsigned count = 0; count < 8; ++count) {
+		const int ret = _msp.Receive(packet, sizeof(packet), &message_id);
+
+		if (ret == -EAGAIN) {
+			break;
+		}
+
+		if (ret < 0) {
+			++_receive_errors;
+
+			if (ret != -EBADMSG && ret != -EMSGSIZE) {
+				break;
+			}
+		}
+
 		if (ret >= 0) {
 			switch (message_id) {
+			case 188: // MSP_SET_OSD_CANVAS: columns, rows.
+				if (ret == 2 && packet[0] >= 30 && packet[0] <= 60 && packet[1] >= 16 && packet[1] <= 22) {
+					_canvas_columns = packet[0];
+					_canvas_rows = packet[1];
+				}
+
+				break;
 
 			case MSP_SET_VTX_CONFIG: {
-					if (ret == 0xF) {
+					if (ret == sizeof(vtx_config) && packet[11] <= BAND_COUNT && packet[12] <= 8 &&
+					    packet[13] <= POWER_LEVEL_COUNT && packet[7] >= 1 && packet[7] <= packet[11] &&
+					    packet[8] >= 1 && packet[8] <= packet[12] && packet[2] <= packet[13]) {
 						memcpy((void *)&vtx_config, packet, sizeof(vtx_config));
 						has_vtx_config = true;
 					}
@@ -510,11 +400,17 @@ void MspOsd::Receive()
 				}
 
 			case MSP_SET_VTXTABLE_BAND: {
-					msp_set_vtxtable_band_t *band_info = (msp_set_vtxtable_band_t *)&packet[0];
+					if (ret < 13) {
+						break;
+					}
+
+					const auto *band_info = reinterpret_cast<const msp_set_vtxtable_band_t *>(packet);
 
 					// Only supported fixed name lenght and < 8 channels for now
-					if (band_info->band <= BAND_COUNT && band_info->band_name_length == 8 && band_info->channel_count <= 8) {
-						memcpy((void *)&vtx_bands[band_info->band - 1], packet, sizeof(msp_set_vtxtable_band_t));
+					if (band_info->band >= 1 && band_info->band <= BAND_COUNT && band_info->band_name_length == 8 &&
+					    band_info->channel_count >= 1 && band_info->channel_count <= 8 && ret == 13 + 2 * band_info->channel_count) {
+						vtx_bands[band_info->band - 1] = {};
+						memcpy(&vtx_bands[band_info->band - 1], packet, ret);
 
 						if (has_vtx_config && band_info->band == vtx_config.band_count) {
 							has_vtx_bands = true;
@@ -525,8 +421,9 @@ void MspOsd::Receive()
 				}
 
 			case MSP_SET_VTXTABLE_POWERLEVEL: {
-					if ((packet[0] - 1) < POWER_LEVEL_COUNT) {
-						memcpy((void *)&power_levels[packet[0] - 1], packet, sizeof(msp_set_vtxtable_powerlevel_t));
+					if (ret >= 4 && packet[0] >= 1 && packet[0] <= POWER_LEVEL_COUNT && packet[3] <= 3 && ret == 4 + packet[3]) {
+						power_levels[packet[0] - 1] = {};
+						memcpy(&power_levels[packet[0] - 1], packet, ret);
 						has_power_config = true;
 					}
 
@@ -616,16 +513,15 @@ int MspOsd::print_status()
 	PX4_INFO("\tscroll rate: %d", static_cast<int>(_param_osd_scroll_rate.get()));
 	PX4_INFO("\tsuccessful sends: %lu", _performance_data.successful_sends);
 	PX4_INFO("\tunsuccessful sends: %lu", _performance_data.unsuccessful_sends);
+	PX4_INFO("\treceive errors: %lu, congested frames: %lu", (unsigned long)_receive_errors, (unsigned long)_congested_frames);
+	PX4_INFO("\tpending bytes: %u, negotiated canvas: %ux%u", (unsigned)_msp.pending_bytes(), _canvas_columns, _canvas_rows);
 
-	// print current display string
-	char msg[FULL_MSG_BUFFER];
-	_display.get(msg, hrt_absolute_time());
-	PX4_INFO("Current message: \n\t%s", msg);
+	PX4_INFO("Current message: %s", _telemetry.data().message);
 
 	if (has_vtx_config) {
 		PX4_INFO("=== VTX Configuration ===");
 
-		if (has_vtx_bands) {
+		if (has_vtx_bands && vtx_config.user_band >= 1 && vtx_config.user_band <= BAND_COUNT) {
 			PX4_INFO("Channel: %c%u", vtx_bands[vtx_config.user_band - 1].band_letter, vtx_config.user_channel);
 
 		} else {
@@ -635,7 +531,7 @@ int MspOsd::print_status()
 
 		PX4_INFO("Frequency: %u MHz", vtx_config.user_freq);
 
-		if (has_power_config && (vtx_config.power_level - 1) < POWER_LEVEL_COUNT) {
+		if (has_power_config && vtx_config.power_level >= 1 && vtx_config.power_level <= POWER_LEVEL_COUNT) {
 			PX4_INFO("Transmit power: %.*s mW", power_levels[vtx_config.power_level - 1].power_label_length,
 				 power_levels[vtx_config.power_level - 1].power_label_name);
 
@@ -681,7 +577,8 @@ int MspOsd::set_channel(char *new_channel)
 			if (band_letter == toupper(vtx_bands[i].band_letter)) {
 				int channel = atoi(&new_channel[1]);
 
-				if (channel > 0 && channel <= vtx_config.channel_count && vtx_bands[i].frequency[channel - 1] != 0) {
+				if (channel > 0 && channel <= vtx_config.channel_count && channel <= vtx_bands[i].channel_count &&
+				    channel <= 8 && vtx_bands[i].frequency[channel - 1] != 0) {
 					vtx_config.user_band = vtx_bands[i].band;
 					vtx_config.user_channel = channel;
 					vtx_config.user_freq = vtx_bands[i].frequency[channel - 1];

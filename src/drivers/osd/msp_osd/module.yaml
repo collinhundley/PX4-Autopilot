@@ -14,11 +14,14 @@ parameters:
             description:
                 short: OSD Symbol Selection
                 long: |
-                  Configure / toggle support display options.
+                  Select DisplayPort items. Existing bit numbers are retained.
+                  Set zero to clear and release the overlay. Battery and arming
+                  telemetry continue independently. New items use bits 22-26.
+                  The default hides pitch, roll, vertical speed and coordinates.
             type: bitmask
             bit:
-                0: CRAFT_NAME
-                1: DISARMED
+                0: (unused) PX4_LABEL
+                1: ARMING_STATE
                 2: GPS_LAT
                 3: GPS_LON
                 4: GPS_SATS
@@ -31,25 +34,94 @@ parameters:
                 11: RSSI_VALUE
                 12: ALTITUDE
                 13: NUMERICAL_VARIO
-                # the following are reserved but not currently functional
-                14: (unused) FLYMODE
+                14: FLYMODE
                 15: (unused) ESC_TMP
-                16: (unused) PITCH_ANGLE
-                17: (unused) ROLL_ANGLE
+                16: PITCH_ANGLE
+                17: ROLL_ANGLE
                 18: CROSSHAIRS
                 19: AVG_CELL_VOLTAGE
-                20: (unused) HORIZON_SIDEBARS
+                20: HORIZON_SIDEBARS
                 21: POWER
-            default: 16383
+                22: FLIGHT_TIME
+                23: AIRSPEED
+                24: ARTIFICIAL_HORIZON
+                25: MESSAGES
+                26: THROTTLE
+            default: 130834418
+
+        OSD_FONT:
+            description:
+                short: OSD glyph mapping
+                long: |
+                  Select the font map supported by the display. INAV matches DJI
+                  Goggles N3 and enables the Ah glyph and extended horizon/arrows.
+                  Betaflight retains compatibility with page-zero displays.
+                  This also selects the matching MSP compatibility identifier.
+            type: enum
+            values:
+                0: Betaflight
+                1: INAV (DJI Goggles N3)
+            default: 0
+
+        OSD_UNITS:
+            description:
+                short: OSD display units
+                long: Metric uses meters and meters per second; imperial uses feet and miles per hour.
+            type: enum
+            values:
+                0: Metric
+                1: Imperial
+            default: 1
+
+        OSD_CANVAS:
+            description:
+                short: OSD canvas size
+                long: Auto accepts the air unit's MSP canvas size, falling back to 60 by 22. Smaller canvases use a compact layout.
+            type: enum
+            values:
+                0: Auto
+                1: 30 by 16
+                2: 50 by 18
+                3: 60 by 22
+            default: 0
+
+        OSD_CAM_PITCH:
+            description:
+                short: OSD camera mounting pitch
+                long: Fixed camera uptilt relative to body X. Positive points upward. Used for horizon and home arrow without a flight-mode-dependent frame change.
+            type: float
+            unit: deg
+            min: -90
+            max: 90
+            default: 0.0
+
+        OSD_CAM_VFOV:
+            description:
+                short: OSD camera vertical field of view
+                long: Effective vertical video field of view used to project the artificial horizon. Adjust for the selected camera mode and crop.
+            type: float
+            unit: deg
+            min: 20
+            max: 150
+            default: 60.0
+
+        OSD_MSG_TIME:
+            description:
+                short: OSD message duration
+                long: Maximum age of a user-facing message. Queued messages expire from publication time.
+            type: int32
+            unit: s
+            min: 1
+            max: 60
+            default: 10
 
         # OSD Crosshairs Vertical Position
         OSD_CH_HEIGHT:
             description:
                 short: OSD Crosshairs Height
                 long: |
-                  Controls the vertical position of the crosshair display.
-                  Resolution is limited by OSD to 15 discrete values. Negative
-                  values will display the crosshairs below the horizon
+                  Vertical crosshair offset from the center reference in rows.
+                  Positive values move downward. The existing parameter name is retained.
             type: int32
             default: 0
             min: -8
@@ -61,9 +133,10 @@ parameters:
             description:
                 short: OSD Warning Level
                 long: |
-                  Minimum security of log level to display on the OSD.
+                  Highest numeric severity accepted from user-facing MAVLink log messages.
+                  INFO includes autotune progress. NONE disables messages.
             type: int32
-            bit:
+            values:
                 0: EMERGENCY
                 1: ALERT
                 2: CRITICAL
@@ -73,7 +146,7 @@ parameters:
                 6: INFO
                 7: DEBUG
                 8: NONE
-            default: 3
+            default: 6
 
         # Scroll Speed
         OSD_SCROLL_RATE:
@@ -107,4 +180,4 @@ parameters:
             type: int32
             min: 0
             max: 1
-            default: 1
+            default: 0

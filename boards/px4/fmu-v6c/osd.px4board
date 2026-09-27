@@ -1,0 +1,4 @@
+# Aircraft OSD build: retain default flight features and omit unused peripherals.
+CONFIG_MODULES_UXRCE_DDS_CLIENT=n
+CONFIG_MODULES_SIMULATION_SIMULATOR_SIH=n
+CONFIG_DRIVERS_GNSS_SEPTENTRIO=n

@@ -58,6 +58,8 @@
 #include "MspV1.hpp"
 #include "MessageDisplay/MessageDisplay.hpp"
 #include "uorb_to_msp.hpp"
+#include "DisplayPort.hpp"
+#include "OsdTelemetry.hpp"
 
 using namespace time_literals;
 
@@ -141,6 +143,8 @@ private:
 
 	// perform actions required for local updates
 	void parameters_update();
+	static bool display_write(void *context, const uint8_t *payload, size_t size);
+	void SendDisplay(uint64_t now);
 
 	// convenience function to check if a given symbol is enabled
 	bool enabled(const SymbolIndex &symbol);
@@ -149,6 +153,16 @@ private:
 	int _msp_fd{-1};
 
 	msp_osd::MessageDisplay _display{};
+	msp_osd::OsdTelemetry _telemetry{};
+	msp_osd::DisplayPort _renderer{display_write, this};
+	bool _display_active{false};
+	bool _stop_release_queued{false};
+	uint64_t _stop_started{0};
+	uint8_t _canvas_columns{0};
+	uint8_t _canvas_rows{0};
+	uint32_t _receive_errors{0};
+	uint32_t _congested_frames{0};
+	uint64_t _last_vtx_request{0};
 
 	bool _is_initialized{false};
 
@@ -173,6 +187,12 @@ private:
 	// parameters
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::OSD_SYMBOLS>) _param_osd_symbols,
+		(ParamInt<px4::params::OSD_UNITS>) _param_osd_units,
+		(ParamInt<px4::params::OSD_FONT>) _param_osd_font,
+		(ParamInt<px4::params::OSD_CANVAS>) _param_osd_canvas,
+		(ParamFloat<px4::params::OSD_CAM_PITCH>) _param_osd_cam_pitch,
+		(ParamFloat<px4::params::OSD_CAM_VFOV>) _param_osd_cam_vfov,
+		(ParamInt<px4::params::OSD_MSG_TIME>) _param_osd_msg_time,
 		(ParamInt<px4::params::OSD_CH_HEIGHT>) _param_osd_ch_height,
 		(ParamInt<px4::params::OSD_SCROLL_RATE>) _param_osd_scroll_rate,
 		(ParamInt<px4::params::OSD_DWELL_TIME>) _param_osd_dwell_time,
@@ -184,8 +204,8 @@ private:
 	char _device[64] {};
 	PerformanceData _performance_data{};
 
-	msp_set_vtx_config_t vtx_config;
-	msp_set_vtxtable_powerlevel_t power_levels[POWER_LEVEL_COUNT];
+	msp_set_vtx_config_t vtx_config{};
+	msp_set_vtxtable_powerlevel_t power_levels[POWER_LEVEL_COUNT] {};
 	msp_set_vtxtable_band_t vtx_bands[BAND_COUNT] {};
 	bool has_vtx_config {false};
 	bool has_power_config {false};

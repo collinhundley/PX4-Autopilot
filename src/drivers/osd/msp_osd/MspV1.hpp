@@ -33,20 +33,67 @@
 
 #pragma once
 
+#include <stddef.h>
+#include <stdint.h>
+#include <sys/types.h>
+
 #define MSP_FRAME_START_SIZE 5
 #define MSP_CRC_SIZE 1
 
 class MspV1
 {
 public:
-	MspV1(int fd);
+	static constexpr size_t MAX_PAYLOAD_SIZE = UINT8_MAX;
+	static constexpr size_t TX_CAPACITY = 2048;
+
+	// The optional callbacks have POSIX read/write semantics and allow deterministic transport tests.
+	struct Io {
+		ssize_t (*read)(int fd, void *buffer, size_t size, void *context);
+		ssize_t (*write)(int fd, const void *buffer, size_t size, void *context);
+		void *context;
+	};
+
+	explicit MspV1(int fd);
+	MspV1(int fd, Io io);
+	// Bind the freshly opened UART without a large temporary on the work-queue stack.
+	void SetFileDescriptor(int fd) { _fd = fd; }
 	int GetMessageSize(int message_type);
-	bool Send(const uint8_t message_id, const void *payload);
-	bool Send(const uint8_t message_id, const void *payload, uint32_t payload_size);
-	int Receive(uint8_t *payload, uint8_t *message_id);
+
+	// Success means the complete packet was queued. Call Flush() to transmit it.
+	bool Send(uint8_t message_id, const void *payload);
+	bool Send(uint8_t message_id, const void *payload, uint32_t payload_size);
+
+	// One bounded write attempt. Pending bytes survive short writes and errors.
+	// Returns 0 when drained, -EAGAIN while pending, or another negative errno.
+	int Flush();
+	size_t pending_bytes() const { return _tx_end - _tx_begin; }
+	size_t free_tx_bytes() const { return TX_CAPACITY - pending_bytes(); }
+
+	// Returns payload length, including zero, only after a complete valid frame.
+	// Incomplete input returns -EAGAIN. The checksum is never copied to payload.
+	int Receive(uint8_t *payload, size_t capacity, uint8_t *message_id);
 
 private:
+	static constexpr size_t RX_CHUNK_SIZE = 64;
+	static constexpr size_t RX_BYTE_BUDGET = 512;
+	enum class RxState : uint8_t { Start, Magic, Direction, Length, Command, Payload, Checksum };
+
+	static ssize_t Read(int fd, void *buffer, size_t size, void *context);
+	static ssize_t Write(int fd, const void *buffer, size_t size, void *context);
+
 	int _fd{-1};
-	uint8_t header[MSP_FRAME_START_SIZE + MSP_CRC_SIZE];
-	bool has_header{false};
+	Io _io;
+	uint8_t _tx_buffer[TX_CAPACITY] {};
+	size_t _tx_begin{0};
+	size_t _tx_end{0};
+
+	uint8_t _rx_buffer[RX_CHUNK_SIZE] {};
+	size_t _rx_begin{0};
+	size_t _rx_end{0};
+	uint8_t _rx_payload[MAX_PAYLOAD_SIZE] {};
+	RxState _rx_state{RxState::Start};
+	uint8_t _rx_size{0};
+	uint8_t _rx_id{0};
+	uint8_t _rx_crc{0};
+	size_t _rx_position{0};
 };

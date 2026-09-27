@@ -18,31 +18,78 @@ If you're unsure, start with your video system's documentation and match the OSD
 
 **MSP (MultiWii Serial Protocol) OSD** is the mechanism used by digital FPV systems (DJI, Walksnail, HDZero) and by many digital goggles/air units to render telemetry over the pilot's video feed.
 The `msp_osd` driver sends MSP DisplayPort drawing commands, not just MSP telemetry.
-It emits MSPv1 message `182` with heartbeat, clear-screen, write-string and draw-screen subcommands at 10 Hz, alongside flight-controller identity, battery and arming telemetry.
+It emits MSPv1 message `182` with heartbeat, clear-screen, write-string and draw-screen subcommands at a nominal 10 Hz, alongside flight-controller identity, battery and arming telemetry.
 DisplayPort support was added in [PX4 pull request #24695](https://github.com/PX4/PX4-Autopilot/pull/24695) and is included in this revision.
 
-### Supported Displays
+### Displayed Items
 
-The current renderer uses a fixed layout with characters extending beyond the legacy 30-column canvas.
-Use an HD canvas on displays that offer a canvas-size setting.
-There is no PX4 parameter for arranging elements or selecting a different canvas size.
+The DisplayPort renderer provides the following fields. Each field has its own `OSD_SYMBOLS` bit.
+Numeric fields show `--` when their source is unavailable, invalid or stale. An unavailable home-direction arrow is shown as `?`.
 
-The displayed items are:
+| Item | Value displayed |
+| ---- | --------------- |
+| Battery capacity used | Consumed mAh from the primary battery (`battery_status` instance 0), switching to Ah at 10,000 mAh. |
+| Current draw | Current in amperes from the same battery. |
+| Flight time | Time since Commander's takeoff timestamp, frozen at landing or disarm. The last duration remains until the next takeoff; this is not time since arming or boot. |
+| Flight mode | User-visible navigation mode, with `MC`, `FW`, `>MC` or `>FW` for VTOL state and transitions. |
+| Airspeed | Validated indicated airspeed (IAS). `*` after the airspeed glyph (or `AS*` in Betaflight mode) identifies an estimated source, such as ground speed minus wind or synthetic airspeed. Ground speed is not silently substituted. |
+| Ground speed | Magnitude of fused horizontal velocity. |
+| Altitude | Height relative to home using valid local vertical position and the home altitude reference. There is no fallback to GNSS altitude above sea level. |
+| Home direction and distance | Horizontal distance from fused global position, plus an arrow relative to the camera's horizontal heading. Direction is unavailable at home or when the camera points nearly vertically. |
+| Artificial horizon | Earth horizon projected into the fixed camera frame, using vehicle attitude and camera mounting/FOV parameters. |
+| Messages | User-facing MAVLink log messages, including autotune progress at the default INFO threshold. |
+| Throttle percentage | Commanded thrust magnitude, using the larger valid, fresh VTOL thrust instance during transition. Axes marked NaN mean stopped motors and contribute zero, so an idle pusher does not hide hover thrust. This is operator feedback, not RC-stick position or measured motor output. Disarmed throttle is zero. |
 
-- Flight mode, arming state, heading and scrolling warnings.
-- Average battery cell voltage.
-- GPS latitude, longitude and satellite count.
-- Distance to home.
-- Altitude: GNSS altitude above mean sea level when a fix is available, otherwise height above the local estimator origin.
-  This is not consistently height above home or terrain.
-- RC link quality in the field labelled RSSI.
-- Numeric pitch and roll.
+Additional fields include total pack voltage, average cell voltage, electrical power, GNSS latitude/longitude and satellite count, RC RSSI percentage, vertical speed, numeric pitch/roll, crosshairs, horizon sidebars and armed/disarmed/failsafe status.
+Arming state appears immediately after flight mode as `ARM` or `DIS`; an appended `!` indicates failsafe. The former PX4 label has been removed, with bit 0 reserved to preserve saved masks.
+The RSSI field uses the receiver's RSSI percentage, not its separate link-quality value.
+The `ESC_TMP` bit remains reserved and has no renderer.
 
-Only the GPS latitude, longitude, satellite count, home distance, RSSI and altitude bits in [`OSD_SYMBOLS`](../advanced_config/parameter_reference.md#OSD_SYMBOLS) gate individual drawing commands in this renderer.
-Setting the whole mask to zero suppresses drawing and the periodic battery/arming telemetry; it does not stop the driver or clear the last displayed frame.
-The other listed items are drawn whenever the mask is nonzero.
-The remaining bit labels and [`OSD_CH_HEIGHT`](../advanced_config/parameter_reference.md#OSD_CH_HEIGHT) come from the older telemetry-based layout and do not control the current DisplayPort layout.
-Ground speed, a home-direction arrow, current, consumed mAh, total pack voltage and crosshairs are not drawn by this renderer.
+Messages use a 30-character scrolling window and a bounded four-message queue.
+More severe messages take priority, and `OSD_MSG_TIME` limits their age from publication, including time spent waiting in the queue.
+The default is 10 seconds; reading the same message again does not extend its life.
+`OSD_LOG_LEVEL=6` includes INFO messages such as autotune progress; `8` disables messages.
+`OSD_SCROLL_RATE` controls each scroll step and `OSD_DWELL_TIME` controls the pause at each end.
+Only messages published through `mavlink_log` are shown; not every PX4 event has a corresponding text message.
+
+### Canvas, Units And Camera
+
+`OSD_UNITS` defaults to `1` (imperial): feet, miles per hour and feet per second.
+Set it to `0` for meters, meters per second and meters per second vertical speed.
+Current, capacity, voltage, power and angles keep their electrical/angular units.
+
+`OSD_CANVAS` selects the layout:
+
+| Value | Canvas |
+| ----- | ------ |
+| `0` (default) | Accept the air unit's MSP canvas announcement; use 60 × 22 until a valid announcement arrives. |
+| `1` | 30 × 16 |
+| `2` | 50 × 18 |
+| `3` | 60 × 22 |
+
+The HD layout spans the full 16:9 canvas, with flight mode and arming state at top left, home information at top center, and flight time aligned to the right edge.
+Airspeed sits to the left of the centered horizon, altitude to the right, and ground speed below airspeed with one blank row between them and aligned units. INAV mode prefixes airspeed with its dedicated airspeed icon; Betaflight mode uses `AS`.
+Throttle sits in the bottom-left corner with its throttle glyph. Battery and cell voltage are combined as `15.3V/3.83V`, centered on the row below consumed capacity and current. These fields form the bottom-center battery group.
+Pitch, roll, vertical speed, latitude and longitude are disabled in the default mask but remain selectable. Additional telemetry occupies the lower rows and right edge. The 50 × 18 canvas uses the same arrangement; narrower canvases use a compact layout.
+For the standard canvas sizes, the driver sends the matching DisplayPort resolution option. Arbitrary negotiated dimensions are respected without overriding them with a different standard profile.
+Field coordinates are predefined rather than individually configurable.
+`OSD_CH_HEIGHT` moves the crosshair vertically within the horizon area; positive values move it down.
+
+For a fixed camera aligned with the aircraft's body X axis, leave `OSD_CAM_PITCH=0`.
+A positive mounting pitch points the camera upward relative to body X.
+The renderer uses this fixed mounting transform for both the horizon and the home arrow, without switching frames when VTOL flight mode changes.
+If the camera points level in forward flight but is not aligned with body X, set its actual mounting angle instead.
+`OSD_CAM_VFOV` defaults to 60 degrees; tune it to the effective vertical field of view of the selected video mode and crop.
+The projection assumes a 16:9 video image.
+
+`OSD_FONT=0` (default) uses the Betaflight glyph map. `OSD_FONT=1` uses the INAV map supported by DJI Goggles N3, including font page 1 for the horizon, arrows and reticle.
+This corresponds to the INAV font-table option documented for N3 in [ArduPilot's DisplayPort setup](https://ardupilot.org/plane/docs/common-displayport.html#configuration).
+The driver also sends the matching `BTFL` or `INAV` MSP compatibility identifier. This selects protocol compatibility; the firmware remains PX4.
+Units use glyphs for mph, feet/meters, mAh and amps, along with a home icon and directional arrow.
+INAV mode adds the combined altitude/unit glyph and Ah glyph. Betaflight mode uses an `AH` text fallback because its standard font has no Ah glyph.
+The font maps are documented in the [Betaflight glyph reference](https://betaflight.com/docs/development/OSD-Glyps) and [INAV symbol definitions](https://github.com/iNavFlight/inav/blob/master/src/main/drivers/osd_symbols.h).
+Select a matching font in the display when available, and verify glyphs and horizon orientation on the bench. Static horizon sidebars are optional; scrolling speed/altitude tapes are not implemented.
+A received canvas announcement or successful UART write does not confirm that a display renders these glyphs correctly.
 
 ### Hardware Setup
 
@@ -64,17 +111,47 @@ make <board>_default boardconfig
 The corresponding board option is `CONFIG_DRIVERS_OSD_MSP_OSD=y`.
 Rebuild the firmware after changing it.
 
+For the Pixhawk 6C aircraft configuration in this branch, build:
+
+```sh
+make px4_fmu-v6c_osd
+```
+
+The `osd` configuration inherits the default board configuration and excludes the uXRCE-DDS client, onboard SIH simulator and Septentrio GNSS driver to make firmware space available.
+It retains the default flight-control features, including both autotuners, SRXL2, logging and MSP OSD.
+The existing `px4_fmu-v6c_default` configuration is unchanged by these exclusions.
+Desktop SITL remains available separately; removing the onboard SIH simulator does not prevent desktop simulation.
+Use the repository's normal build environment for your host OS. Building does not flash the controller or change saved parameters.
+
 ### PX4 Configuration
 
-1. Release the chosen UART from any other serial driver, including MAVLink and uXRCE-DDS.
+1. Release the chosen UART from any other serial driver, including MAVLink and uXRCE-DDS if included in the firmware.
 2. Assign it to MSP OSD with [`MSP_OSD_CONFIG`](../advanced_config/parameter_reference.md#MSP_OSD_CONFIG).
 3. Reboot.
    The driver sets 115200 baud, 8N1 and no hardware flow control internally; `SER_<PORT>_BAUD` does not override this rate.
-4. Leave `OSD_SYMBOLS` at its default of `16383` initially.
-   See the limitations above before changing individual bits.
-5. Adjust [`OSD_LOG_LEVEL`](../advanced_config/parameter_reference.md#OSD_LOG_LEVEL), [`OSD_SCROLL_RATE`](../advanced_config/parameter_reference.md#OSD_SCROLL_RATE) and [`OSD_DWELL_TIME`](../advanced_config/parameter_reference.md#OSD_DWELL_TIME) for warning text and scrolling.
-6. Set [`OSD_RC_STICK`](../advanced_config/parameter_reference.md#OSD_RC_STICK) to `0` unless VTX stick commands are needed and the RC channel mapping has been checked.
-   The driver forwards raw channels in a fixed order while disarmed; it does not use PX4's RC mapping parameters.
+4. Select the desired `OSD_SYMBOLS` fields. The new default is `130834418`, which includes all eleven primary fields above but hides pitch, roll, vertical speed, latitude and longitude. Power and horizon sidebars are optional additions.
+5. Set `OSD_UNITS`, `OSD_FONT`, `OSD_CANVAS`, `OSD_CAM_PITCH` and `OSD_CAM_VFOV` for the display and camera.
+6. Leave `OSD_LOG_LEVEL=6` to include autotune progress, and adjust `OSD_MSG_TIME`, `OSD_SCROLL_RATE` and `OSD_DWELL_TIME` as desired.
+7. Leave [`OSD_RC_STICK`](../advanced_config/parameter_reference.md#OSD_RC_STICK) at its default `0` unless VTX stick commands are needed and the RC channel mapping has been checked.
+   When enabled, the driver forwards fresh raw channels in a fixed order while disarmed; it does not use PX4's RC mapping parameters.
+
+Existing `OSD_SYMBOLS` bit numbers are retained. The new items use these bits:
+
+| Bit | Item |
+| --- | ---- |
+| 22 | Flight time |
+| 23 | Airspeed |
+| 24 | Artificial horizon |
+| 25 | Messages |
+| 26 | Throttle percentage |
+
+Flight mode uses the existing bit 14, and other existing bit labels now control their corresponding rendered fields.
+Saved parameter values are not automatically overwritten on upgrade.
+For example, an existing mask of `16383` does not enable flight mode or the five new bits.
+To adopt the new default layout, explicitly set `OSD_SYMBOLS=130834418`; otherwise select the desired bits individually. Prior masks `131039230` and `131039231` retain pitch, roll, vertical speed, latitude and longitude; the former PX4-label bit is ignored.
+Also check `OSD_LOG_LEVEL`: an existing saved value of `3` continues to hide INFO/WARNING messages until changed.
+
+Setting `OSD_SYMBOLS=0` clears and releases the overlay. The running driver continues its normal MSP flight-controller identity, battery and arming telemetry independently of the display mask.
 
 ### Pixhawk 6C With DJI O4 Air Unit And Goggles N3
 
@@ -98,19 +175,25 @@ In *QGroundControl*, set the following and reboot:
 | Parameter          | Setting                                   |
 | ------------------ | ----------------------------------------- |
 | `MSP_OSD_CONFIG`   | `102` (TELEM 2)                           |
-| `OSD_SYMBOLS`      | `16383` (initial default)                 |
+| `OSD_SYMBOLS`      | `130834418` (simplified default layout)   |
+| `OSD_UNITS`        | `1` (imperial; choose `0` for metric)     |
+| `OSD_FONT`         | `1` (INAV glyph map for Goggles N3)      |
+| `OSD_CANVAS`       | `0` (auto; 60 × 22 fallback)             |
+| `OSD_LOG_LEVEL`    | `6` (include INFO/autotune progress)      |
+| `OSD_CAM_PITCH`    | `0` if the camera is aligned with body X |
+| `OSD_CAM_VFOV`     | `60` initially; match the video mode     |
 | `OSD_RC_STICK`     | `0` (disable VTX stick forwarding)        |
 | `RC_SRXL2_PRT_CFG` | Keep `101` (TELEM 1)                      |
 | `RC_SRXL2_TEL_EN`  | Keep the existing SRXL2 telemetry setting |
 
-Before assigning MSP, check `MAV_0_CONFIG`, `MAV_1_CONFIG`, `MAV_2_CONFIG`, `UXRCE_DDS_CFG`, and any other serial-port assignments.
+Before assigning MSP, check `MAV_0_CONFIG`, `MAV_1_CONFIG`, `MAV_2_CONFIG`, `UXRCE_DDS_CFG` if present, and any other serial-port assignments.
 Disable or move only services assigned to TELEM2 (`102`).
 Do not re-enable MAVLink on TELEM1 when that port is used by SRXL2.
 Setting `SER_TEL2_BAUD=115200` is optional for clarity; the MSP driver selects 115200 itself.
 Building the driver does not change saved port assignments: `MSP_OSD_CONFIG` defaults to Disabled.
 
 Activate, update and link the O4 Air Unit and Goggles N3 using DJI's setup procedure.
-Enable the goggles' OSD/Canvas Mode display and select an HD canvas if that setting is offered by the installed goggles firmware.
+Enable the goggles' OSD/Canvas Mode display and select a matching HD canvas/font if those settings are offered by the installed goggles firmware.
 DJI's Betaflight CLI examples configure Betaflight, so use the PX4 parameters above instead.
 PX4 generates the fixed layout itself; it cannot be edited with Betaflight Configurator.
 DJI documents Canvas Mode, but does not list PX4 as a supported flight-controller firmware; verify this combination on the bench.
@@ -122,11 +205,29 @@ msp_osd status
 srxl2_rc status
 ```
 
-MSP should report `/dev/ttyS3`, `initialized: 1`, increasing successful sends and no increasing failed sends.
+MSP should report `/dev/ttyS3`, `initialized: 1`, increasing successful sends, no increasing failed sends and no sustained transmit backlog.
+The send counters measure packets accepted into the transmit queue; inspect pending bytes and the displayed image as well.
 SRXL2 should remain on `/dev/ttyS5`.
 Verify that OSD values update in the goggles, that RC input still works, and that the arming indication follows the aircraft state.
+Check horizon direction while pitching and rolling the aircraft, the home arrow, imperial/metric labels, autotune text visibility and recovery after restarting the air unit.
+Tune camera mounting/FOV parameters against the actual video before relying on the horizon.
 Successful UART writes alone do not confirm that the goggles received or rendered the data.
 If the OSD is absent, check the selected UART, crossed TX/RX, common ground and goggles OSD setting first.
+
+### Automated Checks
+
+In the normal PX4 Linux build environment, the OSD tests can be built and run with:
+
+```sh
+make px4_sitl_test
+cmake --build build/px4_sitl_test --target unit-MspV1 unit-DisplayPort functional-OsdTelemetry
+ctest --test-dir build/px4_sitl_test --output-on-failure -R '^(unit-(MspV1|DisplayPort)|functional-OsdTelemetry)$'
+python3 src/drivers/osd/msp_osd/test_displayport.py build/px4_sitl_test
+```
+
+The C++ tests exercise telemetry validity, timer/message state, rendering and serial packet handling.
+The PTY test runs the SITL driver and inspects its emitted MSP/DisplayPort packets.
+These checks do not replace testing the O4/N3 font, canvas and video projection on actual hardware.
 
 ### Worked Examples
 
