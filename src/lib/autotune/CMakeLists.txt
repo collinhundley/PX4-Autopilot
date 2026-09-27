@@ -31,4 +31,5 @@
 #
 ############################################################################
 
-px4_add_library(autotune Autotune.cpp)
+px4_add_library(autotune Autotune.cpp Progress.cpp)
+target_link_libraries(autotune PUBLIC px4_work_queue parameters systemlib)

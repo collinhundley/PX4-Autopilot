@@ -33,6 +33,11 @@
 
 #include <gtest/gtest.h>
 #include <memory>
+#include <string>
+#include <vector>
+#include <lib/autotune/Progress.hpp>
+#include <uORB/topics/log_message.h>
+#include <uORB/topics/mavlink_log.h>
 #include <hrt_work.h>
 #include <uORB/Publication.hpp>
 #include <uORB/PublicationMulti.hpp>
@@ -54,10 +59,12 @@ protected:
 	{
 		hrt_init();
 		hrt_work_queue_init();
+		px4_log_initialize();
 	}
 
 	void SetUp() override
 	{
+		resetProgress();
 		param_control_autosave(false);
 		param_reset_all();
 		int32_t aux = 0;
@@ -366,6 +373,147 @@ protected:
 
 		else { _fw->_last_control_input = hrt_absolute_time() - 2_s; }
 	}
+
+
+	void queueTestMessage() { _mc->_session.message("test record"); }
+
+	void resetProgress()
+	{
+		auto &progress = autotune::Progress::instance();
+		progress.ScheduleClear();
+		progress._head = progress._count = progress._dropped = 0;
+		progress._last_publish = 0;
+		mavlink_log_s mavlink{};
+		log_message_s log{};
+
+		while (_mavlink_log.update(&mavlink)) {}
+
+		while (_log_message.update(&log)) {}
+	}
+
+	std::vector<std::string> drainProgress()
+	{
+		std::vector<std::string> messages;
+		auto &progress = autotune::Progress::instance();
+
+		while (progress._count || progress._dropped) {
+			progress.update(progress._last_publish + 100_ms);
+			progress.ScheduleClear();
+			mavlink_log_s mavlink{};
+			EXPECT_TRUE(_mavlink_log.update(&mavlink));
+			messages.emplace_back(mavlink.text);
+			// Verify the same text and severity reach the ULog input, not just telemetry.
+			log_message_s log{};
+			bool found = false;
+
+			while (_log_message.update(&log)) {
+				if (strstr(log.text, mavlink.text)) {
+					EXPECT_EQ(log.severity, mavlink.severity);
+					found = true;
+				}
+			}
+
+			EXPECT_TRUE(found) << mavlink.text;
+			// Even with more queued records, an early call must not flood either sink.
+			progress.update(progress._last_publish + 99_ms);
+			progress.ScheduleClear();
+			EXPECT_FALSE(_mavlink_log.updated());
+			EXPECT_FALSE(_log_message.updated());
+		}
+
+		return messages;
+	}
+
+	void stepState(uint8_t type, uint8_t state, hrt_abstime elapsed = 0)
+	{
+		const auto now = hrt_absolute_time();
+
+		if (type == MC) {
+			mcState(state);
+			_mc->_state_start_time = now - elapsed;
+			_mc->updateStateMachine(now);
+
+		} else {
+			fwState(state);
+			_fw->_state_start_time = now - elapsed;
+			_fw->updateStateMachine(now);
+		}
+	}
+
+	void fwAxes(int32_t axes)
+	{
+		param_set_no_notification(param_find("FW_AT_AXES"), &axes);
+		_fw->updateParams();
+	}
+
+	void fwConvergedAxis(uint8_t state)
+	{
+		// Zero data makes the fitness metric settle; test only the transition/reporting.
+		_fw->_sys_id.setFitnessLpfTimeConstant(.01f, .01f);
+
+		for (int i = 0; i < 100; ++i) { _fw->_sys_id.update(0.f, 0.f); }
+
+		stepState(FW, state, 6_s);
+	}
+
+	void stopTuner(uint8_t type)
+	{
+
+		if (type == MC) { _mc.reset(); } else { _fw.reset(); }
+	}
+
+	void setApply(uint8_t type, int32_t apply)
+	{
+		param_set_no_notification(param_find(type == MC ? "MC_AT_APPLY" : "FW_AT_APPLY"), &apply);
+
+		if (type == MC) { _mc->updateParams(); } else { _fw->updateParams(); }
+	}
+
+	void checkParameterMessages(uint8_t type)
+	{
+		const std::vector<const char *> names = type == MC ? std::vector<const char *> {
+			"MC_ROLLRATE_P", "MC_ROLLRATE_K", "MC_ROLLRATE_I", "MC_ROLLRATE_D", "MC_ROLL_P",
+			"MC_PITCHRATE_P", "MC_PITCHRATE_K", "MC_PITCHRATE_I", "MC_PITCHRATE_D", "MC_PITCH_P",
+			"MC_YAWRATE_P", "MC_YAWRATE_K", "MC_YAWRATE_I", "MC_YAWRATE_D", "MC_YAW_P"
+} : std::vector<const char *> {
+			"FW_RR_P", "FW_RR_I", "FW_RR_FF", "FW_R_TC", "FW_PR_P", "FW_PR_I", "FW_PR_FF", "FW_P_TC",
+			"FW_YR_P", "FW_YR_I", "FW_YR_FF"
+		};
+		vehicle(type);
+		command();
+		run();
+		fwAxes(7);
+		drainProgress();
+		std::vector<float> original;
+
+		for (const char *name : names) { original.push_back(gain(name)); }
+
+		trialGains(type);
+		std::vector<float> trial;
+
+		for (const char *name : names) { trial.push_back(gain(name)); }
+
+		// Stop before any text is emitted: rollback and all pending records must survive.
+		stopTuner(type);
+		const auto messages = drainProgress();
+		ASSERT_EQ(messages.size(), names.size() * 2 + 2);
+		EXPECT_NE(messages[names.size()].find("FAIL: module stopped"), std::string::npos);
+		EXPECT_NE(messages[names.size() + 1].find("restoring previous gains"), std::string::npos);
+
+		for (unsigned i = 0; i < names.size(); ++i) {
+			for (bool restoring : {false, true}) {
+				const auto &message = messages[i + (restoring ? names.size() + 2 : 0)];
+				const std::string prefix = std::string("AutoTune ") + (type == MC ? "MC: " : "FW: ") +
+							   (restoring ? "restored " : "set ") + names[i] + "=";
+				ASSERT_EQ(message.find(prefix), 0u) << message;
+				EXPECT_FLOAT_EQ(std::stof(message.substr(prefix.size())), restoring ? gain(names[i]) : trial[i]);
+			}
+			EXPECT_NEAR(gain(names[i]), original[i], 1e-6f);
+		}
+	}
+
+	uORB::Subscription _mavlink_log{ORB_ID(mavlink_log)};
+	uORB::Subscription _log_message{ORB_ID(log_message)};
 
 	std::unique_ptr<McAutotuneAttitudeControl> _mc;
 	std::unique_ptr<FwAutotuneAttitudeControl> _fw;
@@ -930,4 +1078,81 @@ TEST_F(AutotuneModuleTest, RegimeChangeDuringFwTestRestoresGains)
 	EXPECT_NEAR(gain("FW_RR_P"), original, 1e-6f);
 	run();
 	EXPECT_NEAR(gain("FW_RR_P"), original, 1e-6f);
+}
+
+
+TEST_F(AutotuneModuleTest, McProgressNamesEachAxisOnce)
+{
+	vehicle(MC);
+	command();
+	beginIdentification();
+	EXPECT_EQ(drainProgress(), (std::vector<std::string> {"AutoTune MC: started; initializing", "AutoTune MC: roll tuning"}));
+	run();
+	EXPECT_TRUE(drainProgress().empty());
+	stepState(MC, Status::STATE_ROLL_PAUSE, 3_s);
+	stepState(MC, Status::STATE_PITCH_PAUSE, 3_s);
+	EXPECT_EQ(drainProgress(), (std::vector<std::string> {"AutoTune MC: pitch tuning", "AutoTune MC: yaw tuning"}));
+	loseInput(MC);
+	runMc();
+	EXPECT_EQ(drainProgress(), (std::vector<std::string> {"AutoTune MC: yaw FAIL: controller input lost", "AutoTune MC: FAIL: controller input lost"}));
+}
+
+TEST_F(AutotuneModuleTest, FwProgressReportsIdentificationPassAndDisabledAxis)
+{
+	vehicle(FW);
+	command();
+	beginIdentification();
+	EXPECT_EQ(drainProgress(), (std::vector<std::string> {"AutoTune FW: started; initializing", "AutoTune FW: roll finding excitation amplitude"}));
+	fwConvergedAxis(Status::STATE_ROLL);
+	EXPECT_EQ(drainProgress(), (std::vector<std::string> {"AutoTune FW: roll PASS: identification"}));
+	stepState(FW, Status::STATE_ROLL_PAUSE, 3_s);
+	fwConvergedAxis(Status::STATE_PITCH);
+	stepState(FW, Status::STATE_PITCH_PAUSE, 3_s);
+	stepState(FW, Status::STATE_YAW_AMPLITUDE_DETECTION);
+	EXPECT_EQ(drainProgress(), (std::vector<std::string> {"AutoTune FW: pitch finding excitation amplitude", "AutoTune FW: pitch PASS: identification", "AutoTune FW: yaw SKIPPED: disabled"}));
+}
+
+TEST_F(AutotuneModuleTest, FwProgressReportsAmplitudeTimeoutAsFailure)
+{
+	vehicle(FW);
+	command();
+	beginIdentification();
+	drainProgress();
+	stepState(FW, Status::STATE_ROLL_AMPLITUDE_DETECTION, 31_s);
+	EXPECT_EQ(drainProgress(), (std::vector<std::string> {"AutoTune FW: roll FAIL: timeout; skipping"}));
+	EXPECT_EQ(fwState(), Status::STATE_ROLL_PAUSE);
+}
+
+TEST_F(AutotuneModuleTest, McProgressAuditsEveryWriteAndRollbackAfterStop)
+{
+	checkParameterMessages(MC);
+}
+
+TEST_F(AutotuneModuleTest, FwProgressAuditsEveryWriteAndRollbackAfterStop)
+{
+	checkParameterMessages(FW);
+}
+
+TEST_F(AutotuneModuleTest, ProgressDoesNotClaimWritesWhenApplicationDisabled)
+{
+	for (uint8_t type : {MC, FW}) {
+		vehicle(type);
+		command();
+		run();
+		drainProgress();
+		setApply(type, 0);
+		stepState(type, Status::STATE_APPLY);
+		EXPECT_EQ(drainProgress(), (std::vector<std::string> {std::string("AutoTune ") + (type == MC ? "MC" : "FW") + ": complete; gains not applied"}));
+		stopTuner(type);
+	}
+}
+
+TEST_F(AutotuneModuleTest, ProgressPacesBurstsAndExplicitlyReportsOverflow)
+{
+	// Exercise the real queue without starting a tuner or writing a parameter.
+	for (unsigned i = 0; i < 67; ++i) { queueTestMessage(); }
+
+	const auto messages = drainProgress();
+	ASSERT_EQ(messages.size(), 65u);
+	EXPECT_EQ(messages.back(), "AutoTune: progress queue overflow (3 lost)");
 }

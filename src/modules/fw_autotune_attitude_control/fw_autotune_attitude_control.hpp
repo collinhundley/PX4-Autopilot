@@ -62,7 +62,6 @@
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/vehicle_torque_setpoint.h>
 #include <mathlib/mathlib.h>
-#include <lib/systemlib/mavlink_log.h>
 
 using namespace time_literals;
 
@@ -111,11 +110,11 @@ private:
 	void updateStateMachine(hrt_abstime now);
 	void updateVehicleStatus();
 	bool checkAbort(hrt_abstime now);
-	void abortAutotune(hrt_abstime now);
+	void abortAutotune(hrt_abstime now, const char *reason = "FAIL: module stopped");
 	void updateAmplitudeDetectionState(hrt_abstime now, float rate, float target_rate);
 	void copyGains(int index);
 	bool areGainsGood() const;
-	void saveGainsToParams();
+	void saveGainsToParams(bool restoring = false);
 	void backupAndSaveGainsToParams();
 	void revertParamGains();
 	bool isAuxEnableSwitchEnabled();
@@ -190,7 +189,6 @@ private:
 	bool _want_start_autotune{false};
 	hrt_abstime _start_request_timestamp{0};
 
-	orb_advert_t _mavlink_log_pub{nullptr};
 
 	matrix::Vector3f _kiff{};
 	matrix::Vector3f _rate_k{};

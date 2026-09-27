@@ -320,8 +320,15 @@ void McAutotuneAttitudeControl::publishState(hrt_abstime now)
 	_session.publish(status);
 }
 
-void McAutotuneAttitudeControl::abortAutotune(hrt_abstime now)
+void McAutotuneAttitudeControl::abortAutotune(hrt_abstime now, const char *reason)
 {
+	const int axis = _state == state::roll ? 0 : _state == state::pitch ? 1 : _state == state::yaw ? 2 : -1;
+
+	if (axis >= 0) {
+		_session.axis(axis, reason, true);
+	}
+
+	_session.message(reason, true);
 	revertParamGains();
 	_state = state::fail;
 	_state_start_time = now;
@@ -338,7 +345,7 @@ bool McAutotuneAttitudeControl::checkAbort(hrt_abstime now)
 		_vehicle_cmd_start_autotune = false;
 
 		if (active) {
-			abortAutotune(now);
+			abortAutotune(now, "FAIL: flight regime changed or unavailable");
 		}
 
 		// A terminating tuner must never overwrite a new owner's status.
@@ -356,7 +363,8 @@ bool McAutotuneAttitudeControl::checkAbort(hrt_abstime now)
 						|| fabsf(manual_control_setpoint.pitch) > 0.05f;
 
 		if (timeout || input_lost || mode_changed || pilot_intervention) {
-			abortAutotune(now);
+			abortAutotune(now, timeout ? "FAIL: timeout" : input_lost ? "FAIL: controller input lost" :
+				      mode_changed ? "FAIL: flight mode changed" : "FAIL: pilot intervention");
 			return true;
 		}
 	}
@@ -388,6 +396,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 				_last_control_input = now;
 				_last_publish = 0;
 				_state = registerActuatorControlsCallback() ? state::init : state::fail;
+				_session.message(_state == state::init ? "started; initializing" : "FAIL: callback registration", _state == state::fail);
 				_state_start_time = now;
 				_start_flight_mode = _nav_state;
 			}
@@ -398,6 +407,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	case state::init:
 		if (_are_filters_initialized) {
 			_state = state::roll;
+			_session.axis(0, "tuning");
 			_state_start_time = now;
 			_sys_id.reset();
 			// first step needs to be shorter to keep the drone centered
@@ -415,6 +425,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 		if (areAllSmallerThan(_sys_id.getVariances(), converged_thr)
 		    && ((now - _state_start_time) > 5_s)) {
 			copyGains(0);
+			_session.axis(0, "PASS: identification");
 
 			// wait for the drone to stabilize
 			_state = state::roll_pause;
@@ -426,6 +437,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	case state::roll_pause:
 		if ((now - _state_start_time) > 2_s) {
 			_state = state::pitch;
+			_session.axis(1, "tuning");
 			_state_start_time = now;
 			_sys_id.reset();
 			_input_scale = 1.f / (_param_mc_pitchrate_p.get() * _param_mc_pitchrate_k.get());
@@ -442,6 +454,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 		if (areAllSmallerThan(_sys_id.getVariances(), converged_thr)
 		    && ((now - _state_start_time) > 5_s)) {
 			copyGains(1);
+			_session.axis(1, "PASS: identification");
 			_state = state::pitch_pause;
 			_state_start_time = now;
 		}
@@ -451,6 +464,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	case state::pitch_pause:
 		if ((now - _state_start_time) > 2_s) {
 			_state = state::yaw;
+			_session.axis(2, "tuning");
 			_state_start_time = now;
 			_sys_id.reset();
 			_input_scale = 1.f / (_param_mc_yawrate_p.get() * _param_mc_yawrate_k.get());
@@ -467,6 +481,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 		if (areAllSmallerThan(_sys_id.getVariances(), converged_thr)
 		    && ((now - _state_start_time) > 5_s)) {
 			copyGains(2);
+			_session.axis(2, "PASS: identification");
 			_state = state::yaw_pause;
 			_state_start_time = now;
 		}
@@ -491,18 +506,23 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 			 ? state::apply
 			 : state::fail;
 
+		_session.message(_state == state::apply ? "gains verified" : "FAIL: gain validation", _state == state::fail);
 		_state_start_time = now;
 		break;
 
 	case state::apply:
 		if ((_param_mc_at_apply.get() == 1)) {
 			_state = state::wait_for_disarm;
+			_session.message("waiting for disarm to apply gains");
 
 		} else if (_param_mc_at_apply.get() == 2) {
+			_session.message("applying trial gains");
 			backupAndSaveGainsToParams();
 			_state = state::test;
+			_session.message("testing trial gains");
 
 		} else {
+			_session.message("complete; gains not applied");
 			_state = state::complete;
 		}
 
@@ -512,7 +532,9 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 
 	case state::wait_for_disarm:
 		if (!_armed) {
+			_session.message("applying gains after disarm");
 			saveGainsToParams();
+			_session.message("complete; gain writes finished");
 			_state = state::complete;
 			_state_start_time = now;
 		}
@@ -521,6 +543,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 
 	case state::test:
 		if ((now - _state_start_time) > 4_s) {
+			_session.message("test PASS; tune complete");
 			_state = state::complete;
 			_gains_backup_available = false; // the trial gains have passed validation
 			_state_start_time = now;
@@ -528,6 +551,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 		} else if ((now - _state_start_time) < 4_s
 			   && (now - _state_start_time) > 1_s
 			   && _control_power.longerThan(0.1f)) {
+			_session.message("test FAIL: control power; reverting", true);
 			_state = state::fail;
 			revertParamGains();
 			_state_start_time = now;
@@ -592,7 +616,8 @@ void McAutotuneAttitudeControl::backupAndSaveGainsToParams()
 void McAutotuneAttitudeControl::revertParamGains()
 {
 	if (_gains_backup_available) {
-		saveGainsToParams();
+		_session.message("restoring previous gains", true);
+		saveGainsToParams(true);
 		_gains_backup_available = false;
 	}
 }
@@ -641,7 +666,7 @@ bool McAutotuneAttitudeControl::areGainsGood() const
 	return are_positive && are_small_enough;
 }
 
-void McAutotuneAttitudeControl::saveGainsToParams()
+void McAutotuneAttitudeControl::saveGainsToParams(bool restoring)
 {
 	// save as parallel form
 	_param_mc_rollrate_p.set(_rate_k(0));
@@ -649,33 +674,33 @@ void McAutotuneAttitudeControl::saveGainsToParams()
 	_param_mc_rollrate_i.set(_rate_k(0) * _rate_i(0));
 	_param_mc_rollrate_d.set(_rate_k(0) * _rate_d(0));
 	_param_mc_roll_p.set(_att_p(0));
-	_param_mc_rollrate_p.commit_no_notification();
-	_param_mc_rollrate_k.commit_no_notification();
-	_param_mc_rollrate_i.commit_no_notification();
-	_param_mc_rollrate_d.commit_no_notification();
-	_param_mc_roll_p.commit_no_notification();
+	_session.writeParameter(_param_mc_rollrate_p.handle(), _param_mc_rollrate_p.get(), false, restoring);
+	_session.writeParameter(_param_mc_rollrate_k.handle(), _param_mc_rollrate_k.get(), false, restoring);
+	_session.writeParameter(_param_mc_rollrate_i.handle(), _param_mc_rollrate_i.get(), false, restoring);
+	_session.writeParameter(_param_mc_rollrate_d.handle(), _param_mc_rollrate_d.get(), false, restoring);
+	_session.writeParameter(_param_mc_roll_p.handle(), _param_mc_roll_p.get(), false, restoring);
 
 	_param_mc_pitchrate_p.set(_rate_k(1));
 	_param_mc_pitchrate_k.set(1.f);
 	_param_mc_pitchrate_i.set(_rate_k(1) * _rate_i(1));
 	_param_mc_pitchrate_d.set(_rate_k(1) * _rate_d(1));
 	_param_mc_pitch_p.set(_att_p(1));
-	_param_mc_pitchrate_p.commit_no_notification();
-	_param_mc_pitchrate_k.commit_no_notification();
-	_param_mc_pitchrate_i.commit_no_notification();
-	_param_mc_pitchrate_d.commit_no_notification();
-	_param_mc_pitch_p.commit_no_notification();
+	_session.writeParameter(_param_mc_pitchrate_p.handle(), _param_mc_pitchrate_p.get(), false, restoring);
+	_session.writeParameter(_param_mc_pitchrate_k.handle(), _param_mc_pitchrate_k.get(), false, restoring);
+	_session.writeParameter(_param_mc_pitchrate_i.handle(), _param_mc_pitchrate_i.get(), false, restoring);
+	_session.writeParameter(_param_mc_pitchrate_d.handle(), _param_mc_pitchrate_d.get(), false, restoring);
+	_session.writeParameter(_param_mc_pitch_p.handle(), _param_mc_pitch_p.get(), false, restoring);
 
 	_param_mc_yawrate_p.set(_rate_k(2));
 	_param_mc_yawrate_k.set(1.f);
 	_param_mc_yawrate_i.set(_rate_k(2) * _rate_i(2));
 	_param_mc_yawrate_d.set(_rate_k(2) * _rate_d(2));
 	_param_mc_yaw_p.set(_att_p(2));
-	_param_mc_yawrate_p.commit_no_notification();
-	_param_mc_yawrate_k.commit_no_notification();
-	_param_mc_yawrate_i.commit_no_notification();
-	_param_mc_yawrate_d.commit_no_notification();
-	_param_mc_yaw_p.commit();
+	_session.writeParameter(_param_mc_yawrate_p.handle(), _param_mc_yawrate_p.get(), false, restoring);
+	_session.writeParameter(_param_mc_yawrate_k.handle(), _param_mc_yawrate_k.get(), false, restoring);
+	_session.writeParameter(_param_mc_yawrate_i.handle(), _param_mc_yawrate_i.get(), false, restoring);
+	_session.writeParameter(_param_mc_yawrate_d.handle(), _param_mc_yawrate_d.get(), false, restoring);
+	_session.writeParameter(_param_mc_yaw_p.handle(), _param_mc_yaw_p.get(), true, restoring);
 }
 
 void McAutotuneAttitudeControl::stopAutotune()

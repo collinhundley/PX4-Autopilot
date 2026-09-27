@@ -33,53 +33,50 @@
 
 #pragma once
 
-#include <drivers/drv_hrt.h>
 #include <parameters/param.h>
-#include <uORB/topics/autotune_attitude_control_status.h>
-#include <uORB/topics/vehicle_status.h>
+#include <pthread.h>
+#include <uORB/uORB.h>
+#include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
+
+class AutotuneModuleTest;
 
 namespace autotune
 {
 
-// Commander publishes vehicle_status at least every 500 ms. Allow scheduling jitter,
-// but never start or continue an experiment on an unknown or stale flight regime.
-inline bool eligible(const vehicle_status_s &status, uint8_t vehicle_type, hrt_abstime now)
+/** Process-lifetime, paced text output, independent of either tuner's lifetime. */
+class Progress : public px4::ScheduledWorkItem
 {
-	using namespace time_literals;
-	return status.timestamp != 0 && now >= status.timestamp && now - status.timestamp <= 2_s
-	       && status.vehicle_type == vehicle_type && !status.in_transition_mode;
-}
-
-/**
- * Exclusive writer of the shared excitation/status channel.
- *
- * The single uORB advertisement belongs to this library for the process lifetime,
- * not to either module. Destroying an idle module therefore cannot unadvertise a
- * live experiment. Acquisition, publication and release are serialized; a former
- * owner cannot overwrite its successor's status, including with a terminal sample.
- */
-class Session
-{
-public:
-	explicit Session(uint8_t vehicle_type) : _vehicle_type(vehicle_type) {}
-	~Session();
-
-	Session(const Session &) = delete;
-	Session &operator=(const Session &) = delete;
-
-	bool acquire(hrt_abstime now, hrt_abstime command_timestamp = 0);
-	bool ownsChannel() const;
-	bool publish(autotune_attitude_control_status_s status);
-	void release();
-
-	// Text must have static lifetime. Progress is paced independently of this session.
-	void message(const char *text, bool warning = false);
-	void axis(int index, const char *text, bool warning = false);
-	void writeParameter(param_t parameter, float value, bool notify, bool restoring);
-
 private:
-	const uint8_t _vehicle_type;
-	hrt_abstime _timestamp_start{0};
+	friend class Session;
+	friend class ::AutotuneModuleTest;
+
+	struct Record {
+		const char *text; // static string literal, never module-owned storage
+		float value;
+		param_t parameter;
+		uint8_t vehicle_type;
+		int8_t axis; // -1 for an attempt-wide message
+		bool parameter_write;
+		bool warning;
+	};
+
+	Progress();
+	static Progress &instance(); // caller holds _mutex during construction
+	static void enqueue(const Record &record);
+	void Run() override;
+	void update(hrt_abstime now);
+
+	// A complete 15-parameter MC write followed immediately by rollback fits,
+	// with space for stage messages and a subsequent attempt. No heap per entry.
+	static constexpr unsigned kCapacity = 64;
+	static constexpr hrt_abstime kInterval = 100000; // 10 messages/s; STATUSTEXT runs at 20 Hz
+	static pthread_mutex_t _mutex;
+	Record _records[kCapacity] {};
+	unsigned _head{0};
+	unsigned _count{0};
+	unsigned _dropped{0};
+	hrt_abstime _last_publish{0};
+	orb_advert_t _mavlink_log_pub{nullptr};
 };
 
 } // namespace autotune

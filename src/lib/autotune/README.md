@@ -68,3 +68,37 @@ exercises startup/progress/timeout correlation with deterministic timestamps.
 
 These tests check routing and lifecycle behavior; they do not demonstrate
 convergence or validate flight gains on an aircraft.
+
+## Operator progress and parameter audit
+
+Both tuners emit `AutoTune MC:` or `AutoTune FW:` messages through MAVLink
+STATUSTEXT and PX4 `log_message` (recorded as ULog text messages when logging is
+active). To retain messages for gains applied after landing and queued messages
+still draining at disarm, use a logging mode that continues after disarm (for
+example, `SDLOG_MODE=4`, from first arming until shutdown; reboot after changing
+it). The default mode stops logging at disarm. Messages identify roll, pitch, or yaw when identification begins,
+passes, fails, or is skipped. `PASS: identification` means that the existing
+convergence criterion passed; gain validation and the optional flight test are
+reported separately. This does not certify an axis as safe to fly.
+
+Each gain parameter write reports its name and the float value supplied to the
+parameter store, with nine significant digits for round-trip precision, e.g.
+`AutoTune MC: set MC_ROLLRATE_P=0.0799999982`. These are the actual stored gain
+parameters, including conversions to parallel PID form or attitude time
+constants. PX4 identifies an axis jointly; it does not tune P, I, and D in
+separate stages. Rollback uses `restored` instead of `set`; unsuccessful writes
+are marked `WRITE FAILED` or `RESTORE FAILED`. Waiting for disarm, trial testing,
+completion without applying gains, and abort reasons are also explicit.
+
+The shared progress work item drains a compact 64-record queue at ten messages
+per second, so a batch of 15 MC parameter writes followed by rollback does not
+flood the small uORB logging queues. Values are captured at the write; text may
+appear a few seconds afterward. Gain writes and control-state transitions are
+not delayed by the text queue. Queued records survive either module stopping.
+An overflow explicitly reports the number of dropped records. Telemetry link
+loss or downstream congestion can still lose messages; this is diagnostic
+output, not a guaranteed-delivery protocol.
+
+The functional tests also check axis messages, disabled-axis and timeout
+results, every MC/FW parameter write and rollback value, module-stop delivery,
+and matching text/severity in both logging topics.

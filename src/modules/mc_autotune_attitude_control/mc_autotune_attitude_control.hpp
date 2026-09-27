@@ -96,14 +96,14 @@ private:
 	void updateStateMachine(hrt_abstime now);
 	void updateVehicleStatus();
 	bool checkAbort(hrt_abstime now);
-	void abortAutotune(hrt_abstime now);
+	void abortAutotune(hrt_abstime now, const char *reason = "FAIL: module stopped");
 	void publishState(hrt_abstime now);
 	bool registerActuatorControlsCallback();
 	void stopAutotune();
 	bool areAllSmallerThan(const matrix::Vector<float, 5> &vect, float threshold) const;
 	void copyGains(int index);
 	bool areGainsGood() const;
-	void saveGainsToParams();
+	void saveGainsToParams(bool restoring = false);
 	void backupAndSaveGainsToParams();
 	void revertParamGains();
 

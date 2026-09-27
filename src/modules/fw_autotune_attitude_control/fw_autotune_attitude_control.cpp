@@ -382,8 +382,9 @@ bool FwAutotuneAttitudeControl::checkAbort(hrt_abstime now)
 	if (active && (!eligible || (_state != state::wait_for_disarm
 				     && (_start_flight_mode != _nav_state || (_param_fw_at_man_aux.get() && !_aux_switch_en)
 					 || now - _last_control_input > 1_s)))) {
-		mavlink_log_critical(&_mavlink_log_pub, "Autotune aborted before finishing");
-		abortAutotune(now);
+		abortAutotune(now, !eligible ? "FAIL: flight regime changed or unavailable" :
+			      _start_flight_mode != _nav_state ? "FAIL: flight mode changed" :
+			      (_param_fw_at_man_aux.get() && !_aux_switch_en) ? "FAIL: AUX disabled" : "FAIL: controller input lost");
 
 		if (!eligible) {
 			_session.release();
@@ -431,7 +432,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 		    && autotune::eligible(_vehicle_status, vehicle_status_s::VEHICLE_TYPE_FIXED_WING, now)
 		    && _session.acquire(now, _start_request_timestamp)) {
 
-			mavlink_log_info(&_mavlink_log_pub, "Autotune started");
+			_session.message("started; initializing");
 			_state = state::init;
 			_state_start_time = now;
 			_start_flight_mode = _nav_state;
@@ -452,6 +453,11 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	case state::init:
 		if (_are_filters_initialized) {
 			_state = state::roll_amp_detection;
+
+			if (_param_fw_at_axes.get() & Axes::roll) {
+				_session.axis(0, "finding excitation amplitude");
+			}
+
 			_amplitude_detection_state = amplitudeDetectionState::init;
 			_state_start_time = now;
 			_sys_id.reset(sys_id_init);
@@ -469,6 +475,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	case state::roll_amp_detection: {
 			if (!(_param_fw_at_axes.get() & Axes::roll)) {
 				// Should not tune this axis, skip
+				_session.axis(0, "SKIPPED: disabled");
 				_state = state::roll_pause;
 				break;
 			}
@@ -481,6 +488,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 			if (_amplitude_detection_state == amplitudeDetectionState::complete) {
 
 				_state = state::roll;
+				_session.axis(0, "tuning");
 				_state_start_time = now;
 			}
 
@@ -492,6 +500,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 		if ((_sys_id.getFitness() < converged_thr)
 		    && ((now - _state_start_time) > 5_s)) {
 			copyGains(0);
+			_session.axis(0, "PASS: identification");
 
 			// wait for the drone to stabilize
 			_state = state::roll_pause;
@@ -503,6 +512,11 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	case state::roll_pause:
 		if ((now - _state_start_time) > 2_s) {
 			_state = state::pitch_amp_detection;
+
+			if (_param_fw_at_axes.get() & Axes::pitch) {
+				_session.axis(1, "finding excitation amplitude");
+			}
+
 			_amplitude_detection_state = amplitudeDetectionState::init;
 			_state_start_time = now;
 			_sys_id.reset(sys_id_init);
@@ -519,6 +533,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	case state::pitch_amp_detection: {
 			if (!(_param_fw_at_axes.get() & Axes::pitch)) {
 				// Should not tune this axis, skip
+				_session.axis(1, "SKIPPED: disabled");
 				_state = state::pitch_pause;
 				break;
 			}
@@ -532,6 +547,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 			if (_amplitude_detection_state == amplitudeDetectionState::complete) {
 
 				_state = state::pitch;
+				_session.axis(1, "tuning");
 				_state_start_time = now;
 			}
 
@@ -543,6 +559,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 		if ((_sys_id.getFitness() < converged_thr)
 		    && ((now - _state_start_time) > 5_s)) {
 			copyGains(1);
+			_session.axis(1, "PASS: identification");
 			_state = state::pitch_pause;
 			_state_start_time = now;
 		}
@@ -552,6 +569,11 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	case state::pitch_pause:
 		if ((now - _state_start_time) > 2_s) {
 			_state = state::yaw_amp_detection;
+
+			if (_param_fw_at_axes.get() & Axes::yaw) {
+				_session.axis(2, "finding excitation amplitude");
+			}
+
 			_amplitude_detection_state = amplitudeDetectionState::init;
 			_state_start_time = now;
 			_sys_id.reset(sys_id_init);
@@ -568,6 +590,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	case state::yaw_amp_detection: {
 			if (!(_param_fw_at_axes.get() & Axes::yaw)) {
 				// Should not tune this axis, skip
+				_session.axis(2, "SKIPPED: disabled");
 				_state = state::yaw_pause;
 				break;
 			}
@@ -580,6 +603,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 			if (_amplitude_detection_state == amplitudeDetectionState::complete) {
 
 				_state = state::yaw;
+				_session.axis(2, "tuning");
 				_state_start_time = now;
 			}
 
@@ -590,6 +614,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 		if ((_sys_id.getFitness() < converged_thr)
 		    && ((now - _state_start_time) > 5_s)) {
 			copyGains(2);
+			_session.axis(2, "PASS: identification");
 			_state = state::yaw_pause;
 			_state_start_time = now;
 		}
@@ -606,20 +631,23 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 			 ? state::apply
 			 : state::fail;
 
+		_session.message(_state == state::apply ? "gains verified" : "FAIL: gain validation", _state == state::fail);
 		_state_start_time = now;
 		break;
 
 	case state::apply: {
-			mavlink_log_info(&_mavlink_log_pub, "Autotune finished successfully");
-
 			if ((_param_fw_at_apply.get() == 1)) {
 				_state = state::wait_for_disarm;
+				_session.message("waiting for disarm to apply gains");
 
 			} else if (_param_fw_at_apply.get() == 2) {
+				_session.message("applying trial gains");
 				backupAndSaveGainsToParams();
 				_state = state::test;
+				_session.message("testing trial gains");
 
 			} else {
+				_session.message("complete; gains not applied");
 				_state = state::complete;
 			}
 
@@ -630,7 +658,9 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 
 	case state::wait_for_disarm:
 		if (!_armed) {
+			_session.message("applying gains after disarm");
 			saveGainsToParams();
+			_session.message("complete; gain writes finished");
 			_state = state::complete;
 			_state_start_time = now;
 		}
@@ -639,6 +669,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 
 	case state::test:
 		if ((now - _state_start_time) > 4_s) {
+			_session.message("test PASS; tune complete");
 			_gains_backup_available = false;
 			_state = state::complete;
 			_state_start_time = now;
@@ -646,6 +677,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 		} else if ((now - _state_start_time) < 4_s
 			   && (now - _state_start_time) > 1_s
 			   && _control_power.longerThan(0.1f)) {
+			_session.message("test FAIL: control power; reverting", true);
 			_state = state::fail;
 			revertParamGains();
 			_state_start_time = now;
@@ -667,8 +699,7 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 				break;
 			}
 
-			orb_advert_t mavlink_log_pub = nullptr;
-			mavlink_log_info(&mavlink_log_pub, "Autotune returned to idle");
+			_session.message("returned to idle");
 			_state = state::idle;
 			_vehicle_cmd_start_autotune = false;
 			_want_start_autotune = false;
@@ -688,29 +719,31 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	if (_state != state::wait_for_disarm && _state != state::idle && _state != state::fail && _state != state::complete) {
 
 		const bool timeout = (now - _state_start_time) > 30_s;
-		orb_advert_t mavlink_log_pub = nullptr;
 
 		if (timeout) {
 			// Skip to next axis
-			mavlink_log_critical(&mavlink_log_pub, "Autotune axis timeout, skipping to next axis");
 
 			switch (_state) {
 			case state::roll_amp_detection:
 			case state::roll:
+				_session.axis(0, "FAIL: timeout; skipping", true);
 				_state = state::roll_pause;   // proceed to pitch
 				break;
 
 			case state::pitch_amp_detection:
 			case state::pitch:
+				_session.axis(1, "FAIL: timeout; skipping", true);
 				_state = state::pitch_pause;  // proceed to yaw
 				break;
 
 			case state::yaw_amp_detection:
 			case state::yaw:
+				_session.axis(2, "FAIL: timeout; skipping", true);
 				_state = state::yaw_pause;    // proceed to verification
 				break;
 
 			default:
+				_session.message("FAIL: timeout", true);
 				_state = state::fail;         // safety fallback
 				break;
 			}
@@ -735,8 +768,17 @@ void FwAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	}
 }
 
-void FwAutotuneAttitudeControl::abortAutotune(hrt_abstime now)
+void FwAutotuneAttitudeControl::abortAutotune(hrt_abstime now, const char *reason)
 {
+	const int axis = (_state == state::roll || _state == state::roll_amp_detection) ? 0 :
+			 (_state == state::pitch || _state == state::pitch_amp_detection) ? 1 :
+			 (_state == state::yaw || _state == state::yaw_amp_detection) ? 2 : -1;
+
+	if (axis >= 0) {
+		_session.axis(axis, reason, true);
+	}
+
+	_session.message(reason, true);
 	revertParamGains();
 	_state = state::fail;
 	_state_start_time = now;
@@ -824,27 +866,28 @@ void FwAutotuneAttitudeControl::backupAndSaveGainsToParams()
 void FwAutotuneAttitudeControl::revertParamGains()
 {
 	if (_gains_backup_available) {
-		saveGainsToParams();
+		_session.message("restoring previous gains", true);
+		saveGainsToParams(true);
 		_gains_backup_available = false;
 	}
 }
 
-void FwAutotuneAttitudeControl::saveGainsToParams()
+void FwAutotuneAttitudeControl::saveGainsToParams(bool restoring)
 {
 	if (_param_fw_at_axes.get() & Axes::roll) {
 		_param_fw_rr_p.set(_rate_k(0));
 		_param_fw_rr_i.set(_rate_k(0) * _rate_i(0));
 		_param_fw_rr_ff.set(_rate_ff(0));
 		_param_fw_r_tc.set(1.f / _att_p(0));
-		_param_fw_rr_p.commit_no_notification();
-		_param_fw_rr_i.commit_no_notification();
-		_param_fw_rr_ff.commit_no_notification();
+		_session.writeParameter(_param_fw_rr_p.handle(), _param_fw_rr_p.get(), false, restoring);
+		_session.writeParameter(_param_fw_rr_i.handle(), _param_fw_rr_i.get(), false, restoring);
+		_session.writeParameter(_param_fw_rr_ff.handle(), _param_fw_rr_ff.get(), false, restoring);
 
 		if (_param_fw_at_axes.get() == Axes::roll) {
-			_param_fw_r_tc.commit();
+			_session.writeParameter(_param_fw_r_tc.handle(), _param_fw_r_tc.get(), true, restoring);
 
 		} else {
-			_param_fw_r_tc.commit_no_notification();
+			_session.writeParameter(_param_fw_r_tc.handle(), _param_fw_r_tc.get(), false, restoring);
 		}
 	}
 
@@ -853,15 +896,15 @@ void FwAutotuneAttitudeControl::saveGainsToParams()
 		_param_fw_pr_i.set(_rate_k(1) * _rate_i(1));
 		_param_fw_pr_ff.set(_rate_ff(1));
 		_param_fw_p_tc.set(1.f / _att_p(1));
-		_param_fw_pr_p.commit_no_notification();
-		_param_fw_pr_i.commit_no_notification();
-		_param_fw_pr_ff.commit_no_notification();
+		_session.writeParameter(_param_fw_pr_p.handle(), _param_fw_pr_p.get(), false, restoring);
+		_session.writeParameter(_param_fw_pr_i.handle(), _param_fw_pr_i.get(), false, restoring);
+		_session.writeParameter(_param_fw_pr_ff.handle(), _param_fw_pr_ff.get(), false, restoring);
 
 		if (!(_param_fw_at_axes.get() & Axes::yaw)) {
-			_param_fw_p_tc.commit();
+			_session.writeParameter(_param_fw_p_tc.handle(), _param_fw_p_tc.get(), true, restoring);
 
 		} else {
-			_param_fw_p_tc.commit_no_notification();
+			_session.writeParameter(_param_fw_p_tc.handle(), _param_fw_p_tc.get(), false, restoring);
 		}
 	}
 
@@ -869,9 +912,9 @@ void FwAutotuneAttitudeControl::saveGainsToParams()
 		_param_fw_yr_p.set(_rate_k(2));
 		_param_fw_yr_i.set(_rate_k(2) * _rate_i(2));
 		_param_fw_yr_ff.set(_rate_ff(2));
-		_param_fw_yr_p.commit_no_notification();
-		_param_fw_yr_i.commit_no_notification();
-		_param_fw_yr_ff.commit();
+		_session.writeParameter(_param_fw_yr_p.handle(), _param_fw_yr_p.get(), false, restoring);
+		_session.writeParameter(_param_fw_yr_i.handle(), _param_fw_yr_i.get(), false, restoring);
+		_session.writeParameter(_param_fw_yr_ff.handle(), _param_fw_yr_ff.get(), true, restoring);
 	}
 }
 
