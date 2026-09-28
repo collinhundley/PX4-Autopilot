@@ -153,7 +153,7 @@ void OsdTelemetryCore::update(uint64_t now, const Samples &s, const Settings &se
 		_data.armed = s.status.arming_state == vehicle_status_s::ARMING_STATE_ARMED;
 		_data.failsafe = s.status.failsafe;
 		const char *name = s.status.nav_state_display < vehicle_status_s::NAVIGATION_STATE_MAX ?
-				   mode_util::nav_state_names[s.status.nav_state_display] : "Unknown";
+				   mode_util::nav_state_name(s.status.nav_state_display, s.status.vehicle_type) : "Unknown";
 		const char *vehicle = "";
 
 		if (s.status.is_vtol) {

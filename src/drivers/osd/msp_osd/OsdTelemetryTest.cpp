@@ -351,6 +351,37 @@ TEST_F(OsdTelemetryTest, ModeUsesDisplayStateAndShowsVtolTransitions)
 	EXPECT_STREQ(core.data().mode, "Unknown >MC");
 }
 
+TEST_F(OsdTelemetryTest, PositionModeUsesCruiseForFixedWingIncludingVtol)
+{
+	samples.status.nav_state = vehicle_status_s::NAVIGATION_STATE_MANUAL;
+	samples.status.nav_state_display = vehicle_status_s::NAVIGATION_STATE_POSCTL;
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
+	update();
+	EXPECT_STREQ(core.data().mode, "Position");
+
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
+	update();
+	EXPECT_STREQ(core.data().mode, "Cruise");
+
+	samples.status.is_vtol = true;
+	update();
+	EXPECT_STREQ(core.data().mode, "Cruise FW");
+
+	samples.status.in_transition_mode = true;
+	samples.status.in_transition_to_fw = false;
+	update();
+	EXPECT_STREQ(core.data().mode, "Cruise >MC");
+
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
+	samples.status.in_transition_to_fw = true;
+	update();
+	EXPECT_STREQ(core.data().mode, "Position >FW");
+
+	samples.status.in_transition_mode = false;
+	update();
+	EXPECT_STREQ(core.data().mode, "Position MC");
+}
+
 TEST_F(OsdTelemetryTest, TimerStartsAtTakeoffFreezesOnLandingAndResetsOnNextFlight)
 {
 	update();
