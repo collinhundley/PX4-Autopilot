@@ -49,6 +49,9 @@ using namespace matrix;
 Tailsitter::Tailsitter(VtolAttitudeControl *attc) :
 	VtolType(attc)
 {
+	// Rate controllers read these only at handoff. Expose them to parameter downloads at startup.
+	param_find("VT_TS_THR_SLEW");
+	param_find("VT_TS_B_THR_SLEW");
 	_handoff_pub.advertise();
 }
 
