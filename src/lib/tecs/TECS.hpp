@@ -199,7 +199,6 @@ public:
 	 */
 	float getHeightRateSetpointDirect() const {return _height_rate_setpoint_direct; }
 
-
 private:
 	// State
 	VelocitySmoothing
@@ -312,6 +311,12 @@ public:
 	 *
 	 */
 	void initialize(const Setpoint &setpoint, const Input &input, Param &param, const Flag &flag);
+	void setThrottleTracking(float applied, float saturation)
+	{
+		_applied_throttle = applied;
+		_throttle_saturation = PX4_ISFINITE(applied) && PX4_ISFINITE(saturation) ? saturation : 0.f;
+	}
+
 	/**
 	 * @brief Update state and output.
 	 *
@@ -561,6 +566,8 @@ private:
 	AlphaFilter<float> _ste_rate_estimate_filter;		///< Low pass filter for the specific total energy rate.
 	float _pitch_integ_state{0.0f};				///< Pitch integrator state [rad].
 	float _throttle_integ_state{0.0f};			///< Throttle integrator state [-].
+	float _applied_throttle{NAN}; ///< Actual collective while the handoff limiter is active, before battery scaling.
+	float _throttle_saturation{0.f}; ///< Positive if a higher command is being limited; negative for a lower command.
 
 	// Output
 	DebugOutput _debug_output;				///< Debug output.
@@ -614,6 +621,12 @@ public:
 		    float eas_to_tas, float throttle_min, float throttle_setpoint_max,
 		    float throttle_trim, float pitch_limit_min, float pitch_limit_max, float target_climbrate,
 		    float target_sinkrate, float speed_deriv_forward, float hgt_rate, float hgt_rate_sp = NAN);
+
+	// Request normal controller initialization for a new tailsitter handoff, including short aborts.
+	void initializeForHandoff() { _update_timestamp = 0; }
+
+	// Feedback from the temporary collective limiter, before battery scaling; NAN disables tracking.
+	void setThrottleTracking(float applied, float saturation) { _control.setThrottleTracking(applied, saturation); }
 
 	void resetIntegrals()
 	{
@@ -708,7 +721,7 @@ private:
 	 *
 	 */
 	void initialize(const float altitude, const float altitude_rate, const float equivalent_airspeed,
-			float eas_to_tas);
+			float eas_to_tas, bool height_rate_control);
 
 	TECSControl 			_control;			///< Control submodule.
 	TECSAirspeedFilter 		_airspeed_filter;		///< Airspeed filter submodule.

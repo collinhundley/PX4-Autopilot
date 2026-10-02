@@ -1,0 +1,261 @@
+[
+  {
+    "name": "stick-035",
+    "stick": 0.35,
+    "fw_seconds": 3
+  },
+  {
+    "name": "stick-050",
+    "stick": 0.5,
+    "fw_seconds": 3
+  },
+  {
+    "name": "crosswind-left-4-slew-0.1",
+    "wind_mps": 4,
+    "wind_from_deg": 210,
+    "throttle_slew": 0.1
+  },
+  {
+    "name": "crosswind-left-4-slew-0.2",
+    "wind_mps": 4,
+    "wind_from_deg": 210,
+    "throttle_slew": 0.2
+  },
+  {
+    "name": "crosswind-left-4-slew-0.3",
+    "wind_mps": 4,
+    "wind_from_deg": 210,
+    "throttle_slew": 0.3
+  },
+  {
+    "name": "nose-up-02-slew-0.1",
+    "pitch_nm": 0.2,
+    "throttle_slew": 0.1
+  },
+  {
+    "name": "nose-up-02-slew-0.2",
+    "pitch_nm": 0.2,
+    "throttle_slew": 0.2
+  },
+  {
+    "name": "nose-up-02-slew-0.3",
+    "pitch_nm": 0.2,
+    "throttle_slew": 0.3
+  },
+  {
+    "name": "nose-down-06-slew-0.1",
+    "pitch_nm": -0.6,
+    "throttle_slew": 0.1
+  },
+  {
+    "name": "nose-down-06-slew-0.2",
+    "pitch_nm": -0.6,
+    "throttle_slew": 0.2
+  },
+  {
+    "name": "nose-down-06-slew-0.3",
+    "pitch_nm": -0.6,
+    "throttle_slew": 0.3
+  },
+  {
+    "name": "mission-30-before",
+    "mission": true,
+    "cruise_mph": 42,
+    "speed_change_mph": 30,
+    "speed_change_stage": "front",
+    "speed_change_after": 1,
+    "fw_seconds": 15
+  },
+  {
+    "name": "mission-42-before",
+    "mission": true,
+    "cruise_mph": 33,
+    "speed_change_mph": 42,
+    "speed_change_stage": "front",
+    "speed_change_after": 1,
+    "fw_seconds": 15
+  },
+  {
+    "name": "existing-tecs-slew",
+    "tecs_throttle_slew": 0.05
+  },
+  {
+    "name": "delayed-fw-200ms",
+    "delay_fw_ms": 200
+  },
+  {
+    "name": "missing-fw-timeout",
+    "delay_fw_ms": 1400,
+    "expected_quadchute": true
+  },
+  {
+    "name": "three-axis-trim",
+    "pitch_nm": 0.35,
+    "roll_nm": 0.08,
+    "yaw_nm": 0.06,
+    "wind_mps": 3,
+    "wind_from_deg": 30
+  },
+  {
+    "name": "repeat",
+    "cycles": 2,
+    "fw_seconds": 8
+  },
+  {
+    "name": "abort-repeat",
+    "abort": true,
+    "fw_seconds": 8
+  },
+  {
+    "name": "rapid-increase",
+    "stick": 0.5,
+    "rapid": true,
+    "fw_seconds": 2
+  },
+  {
+    "name": "nose-down-06-dynamic",
+    "pitch_nm": -0.6,
+    "settle_seconds": 2,
+    "settle_rate_dps": 35
+  },
+  {
+    "name": "mission-30-during",
+    "mission": true,
+    "cruise_mph": 42,
+    "speed_change_mph": 30,
+    "speed_change_stage": "fw",
+    "speed_change_after": 0.15,
+    "fw_seconds": 15
+  },
+  {
+    "name": "mission-42-during",
+    "mission": true,
+    "cruise_mph": 33,
+    "speed_change_mph": 42,
+    "speed_change_stage": "fw",
+    "speed_change_after": 0.15,
+    "fw_seconds": 15
+  },
+  {
+    "name": "mission-30-after",
+    "mission": true,
+    "cruise_mph": 42,
+    "speed_change_mph": 30,
+    "speed_change_stage": "fw",
+    "speed_change_after": 4,
+    "fw_seconds": 15
+  },
+  {
+    "name": "mission-42-after",
+    "mission": true,
+    "cruise_mph": 33,
+    "speed_change_mph": 42,
+    "speed_change_stage": "fw",
+    "speed_change_after": 4,
+    "fw_seconds": 15
+  },
+  {
+    "name": "crosswind-left-4-dynamic",
+    "wind_mps": 4,
+    "wind_from_deg": 210,
+    "settle_seconds": 2,
+    "settle_rate_dps": 35
+  },
+  {
+    "name": "crosswind-right-4",
+    "wind_mps": 4,
+    "wind_from_deg": 30
+  },
+  {
+    "name": "calm-30",
+    "handoff_mph": 30,
+    "cruise_mph": 30
+  },
+  {
+    "name": "stick-075",
+    "stick": 0.75,
+    "fw_seconds": 1.5
+  },
+  {
+    "name": "calm-28",
+    "handoff_mph": 28,
+    "cruise_mph": 28
+  },
+  {
+    "name": "calm-32",
+    "handoff_mph": 32,
+    "cruise_mph": 32
+  },
+  {
+    "name": "calm-35",
+    "handoff_mph": 35,
+    "cruise_mph": 35
+  },
+  {
+    "name": "moderate-gust",
+    "wind_mps": 4,
+    "wind_from_deg": 30,
+    "gust_mps": 1,
+    "turbulence": 0.15
+  },
+  {
+    "name": "nose-up-04",
+    "pitch_nm": 0.4
+  },
+  {
+    "name": "nose-down-04",
+    "pitch_nm": -0.4
+  },
+  {
+    "name": "nose-up-06-dynamic-hover",
+    "pitch_nm": 0.6,
+    "settle_seconds": 2,
+    "settle_rate_dps": 35
+  },
+  {
+    "name": "manual-handoff-38",
+    "handoff_mph": 38,
+    "cruise_mph": 38,
+    "stick": 0.5,
+    "fw_seconds": 2,
+    "pitch_target_deg": 6
+  },
+  {
+    "name": "manual-handoff-44",
+    "handoff_mph": 44,
+    "cruise_mph": 44,
+    "stick": 0.5,
+    "fw_seconds": 2,
+    "pitch_target_deg": 6
+  },
+  {
+    "name": "mission-42-after-settled",
+    "mission": true,
+    "cruise_mph": 33,
+    "speed_change_mph": 42,
+    "speed_change_stage": "fw",
+    "speed_change_after": 8,
+    "fw_seconds": 18
+  },
+  {
+    "name": "mission-30-after-settled",
+    "mission": true,
+    "cruise_mph": 42,
+    "speed_change_mph": 30,
+    "speed_change_stage": "fw",
+    "speed_change_after": 8,
+    "fw_seconds": 18
+  },
+  {
+    "name": "auto-handoff-38-pitch6",
+    "handoff_mph": 38,
+    "cruise_mph": 38,
+    "pitch_target_deg": 6
+  },
+  {
+    "name": "auto-handoff-44-pitch6",
+    "handoff_mph": 44,
+    "cruise_mph": 44,
+    "pitch_target_deg": 6
+  }
+]

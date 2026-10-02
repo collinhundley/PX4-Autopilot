@@ -34,6 +34,8 @@
 #pragma once
 
 #include <lib/rate_control/rate_control.hpp>
+#include <lib/rate_control/tailsitter_handoff.hpp>
+#include <uORB/topics/tailsitter_handoff.h>
 #include <lib/rate_control/gain_compression.hpp>
 
 #include <drivers/drv_hrt.h>
@@ -56,6 +58,8 @@
 #include <uORB/SubscriptionMultiArray.hpp>
 #include <uORB/SubscriptionCallback.hpp>
 #include <uORB/topics/actuator_controls_status.h>
+#include <uORB/topics/tailsitter_handoff_status.h>
+#include <uORB/topics/tecs_status.h>
 #include <uORB/topics/airspeed_validated.h>
 #include <uORB/topics/battery_status.h>
 #include <uORB/topics/control_allocator_status.h>
@@ -82,6 +86,7 @@ using namespace time_literals;
 class FixedwingRateControl final : public ModuleBase, public ModuleParams,
 	public px4::ScheduledWorkItem
 {
+	friend class TailsitterHandoffTest;
 public:
 	static Descriptor desc;
 
@@ -100,6 +105,22 @@ public:
 	bool init();
 
 private:
+	uORB::Subscription _handoff_sub{ORB_ID(tailsitter_handoff)};
+	uORB::Publication<tailsitter_handoff_s> _handoff_ack_pub{ORB_ID(tailsitter_handoff_ack)};
+	uORB::Subscription _virtual_rates_sp_sub{ORB_ID(vehicle_rates_setpoint_virtual_fw)};
+	tailsitter_handoff_s _handoff{};
+	uint64_t _handoff_initialized{0};
+	float _handoff_elapsed{0.f};
+	matrix::Vector3f _handoff_trim{};
+	matrix::Vector3f _handoff_rate_offset{};
+	matrix::Vector3f _handoff_torque_offset{};
+	matrix::Vector3f _output_saturation{};
+	matrix::Vector3f _allocator_saturation{};
+	tailsitter_handoff::ThrottleSlew _throttle_slew;
+	uORB::Publication<tailsitter_handoff_status_s> _handoff_status_pub{ORB_ID(tailsitter_handoff_status)};
+	uORB::SubscriptionData<tecs_status_s> _handoff_tecs_sub{ORB_ID(tecs_status)};
+	bool _handoff_ack_pending{false};
+
 	void Run() override;
 
 	uORB::SubscriptionCallbackWorkItem _vehicle_angular_velocity_sub{this, ORB_ID(vehicle_angular_velocity)};

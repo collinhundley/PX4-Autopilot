@@ -62,6 +62,8 @@
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_land_detected.h>
 #include <uORB/topics/vehicle_rates_setpoint.h>
+#include <uORB/topics/tailsitter_handoff.h>
+#include <uORB/topics/tecs_status.h>
 #include <uORB/topics/vehicle_status.h>
 
 using matrix::AxisAnglef;
@@ -115,7 +117,11 @@ public:
 	inline static const matrix::Quatf _q_mc_to_fw{matrix::Eulerf{0.f, -M_PI_2_F, 0.f}};
 
 private:
+	uORB::SubscriptionData<tailsitter_handoff_s> _handoff_sub{ORB_ID(tailsitter_handoff)};
+	uORB::SubscriptionData<tecs_status_s> _handoff_tecs_sub{ORB_ID(tecs_status)};
+
 	friend class AutotuneModuleTest;
+	friend class TailsitterHandoffTest;
 
 	void Run() override;
 
@@ -136,6 +142,7 @@ private:
 	uORB::SubscriptionData<airspeed_validated_s> _airspeed_validated_sub{ORB_ID(airspeed_validated)};
 
 	uORB::Publication<vehicle_attitude_setpoint_s>	_attitude_sp_pub;
+	uORB::Publication<vehicle_rates_setpoint_s> _virtual_rate_sp_pub{ORB_ID(vehicle_rates_setpoint_virtual_fw)};
 	uORB::Publication<vehicle_rates_setpoint_s>	_rate_sp_pub{ORB_ID(vehicle_rates_setpoint)};
 	uORB::Publication<landing_gear_wheel_s>		_landing_gear_wheel_pub{ORB_ID(landing_gear_wheel)};
 

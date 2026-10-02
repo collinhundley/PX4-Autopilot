@@ -43,6 +43,9 @@
 #define TAILSITTER_H
 
 #include "vtol_type.h"
+#include <uORB/Publication.hpp>
+#include <uORB/Subscription.hpp>
+#include <uORB/topics/tailsitter_handoff.h>
 
 #include <parameters/param.h>
 #include <drivers/drv_hrt.h>
@@ -59,6 +62,7 @@ static constexpr float B_TRANS_THRUST_BLENDING_DURATION = 0.5f;
 
 class Tailsitter : public VtolType
 {
+	friend class TailsitterHandoffTest;
 
 public:
 	Tailsitter(VtolAttitudeControl *_att_controller);
@@ -73,6 +77,17 @@ public:
 	void blendThrottleBeginningBackTransition(float scale);
 
 private:
+	uORB::Subscription _handoff_mc_sub{ORB_ID(tailsitter_handoff_mc)};
+	uORB::Subscription _handoff_ack_sub{ORB_ID(tailsitter_handoff_ack)};
+	uORB::Publication<tailsitter_handoff_s> _handoff_pub{ORB_ID(tailsitter_handoff)};
+	tailsitter_handoff_s _handoff{};
+	matrix::Vector3f _handoff_motor_residual{};
+	hrt_abstime _handoff_active_timestamp{0};
+	hrt_abstime _last_valid_fw_output{0};
+
+	void startHandoff();
+	bool usesFwThrottleHandoff() const override { return true; }
+
 	enum class vtol_mode {
 		MC_MODE = 0,			/**< vtol is in multicopter mode */
 		TRANSITION_FRONT_P1,	/**< vtol is in front transition part 1 mode */

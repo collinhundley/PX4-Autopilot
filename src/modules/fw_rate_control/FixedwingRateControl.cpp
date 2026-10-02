@@ -55,6 +55,8 @@ FixedwingRateControl::FixedwingRateControl(bool vtol) :
 	parameters_update();
 
 	_rate_ctrl_status_pub.advertise();
+
+	if (vtol) { _handoff_status_pub.advertise(); }
 }
 
 FixedwingRateControl::~FixedwingRateControl()
@@ -251,6 +253,8 @@ void FixedwingRateControl::Run()
 		vehicle_angular_velocity_s angular_velocity{};
 		_vehicle_angular_velocity_sub.copy(&angular_velocity);
 
+		_vehicle_status_sub.update(&_vehicle_status);
+
 		Vector3f rates(angular_velocity.xyz);
 		Vector3f angular_accel{angular_velocity.xyz_derivative};
 
@@ -261,8 +265,6 @@ void FixedwingRateControl::Run()
 						 angular_velocity.xyz_derivative[0]);
 		}
 
-		// vehicle status update must be before the vehicle_control_mode poll, otherwise rate sp are not published during whole transition
-		_vehicle_status_sub.update(&_vehicle_status);
 		const bool is_in_transition_except_tailsitter = _vehicle_status.in_transition_mode
 				&& !_vehicle_status.is_vtol_tailsitter;
 		const bool is_fixed_wing = _vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
@@ -271,6 +273,19 @@ void FixedwingRateControl::Run()
 		_vehicle_control_mode_sub.update(&_vcontrol_mode);
 
 		vehicle_land_detected_poll();
+		_handoff_sub.update(&_handoff);
+
+		if (!_vehicle_status.is_vtol_tailsitter || !_in_fw_or_transition_wo_tailsitter_transition
+		    || !_vcontrol_mode.flag_armed || _landed || !_vcontrol_mode.flag_control_rates_enabled || _handoff.handoff_id == 0) {
+			_handoff_initialized = 0;
+			_throttle_slew.cancel();
+			_handoff_trim.zero();
+			_handoff_rate_offset.zero();
+			_handoff_torque_offset.zero();
+			_handoff_elapsed = 0.f;
+			_handoff_ack_pending = false;
+			_output_saturation.zero();
+		}
 
 		vehicle_manual_poll();
 		vehicle_land_detected_poll();
@@ -315,31 +330,33 @@ void FixedwingRateControl::Run()
 				_param_vt_fw_difthr_en & static_cast<int32_t>(VTOLFixedWingDifferentialThrustEnabledBit::YAW_BIT)
 			);
 
-			if (_vehicle_status.is_vtol_tailsitter) {
-				// Swap roll and yaw
-				diffthr_enabled.swapRows(0, 2);
-			}
-
 			// saturation handling for axis controlled by differential thrust (VTOL only)
 			control_allocator_status_s control_allocator_status;
 
 			// Set saturation flags for VTOL differential thrust feature
 			// If differential thrust is enabled in an axis, assume it's the only torque authority and only update saturation using matrix 0 allocating the motors.
 			if (_control_allocator_status_subs[0].update(&control_allocator_status)) {
+				if (_vehicle_status.is_vtol_tailsitter) {
+					tailsitter_handoff::toFW(Vector3f(control_allocator_status.unallocated_torque)).copyTo(control_allocator_status.unallocated_torque);
+				}
+
 				for (size_t i = 0; i < 3; i++) {
 					if (diffthr_enabled(i)) {
-						_rate_control.setPositiveSaturationFlag(i, control_allocator_status.unallocated_torque[i] > FLT_EPSILON);
-						_rate_control.setNegativeSaturationFlag(i, control_allocator_status.unallocated_torque[i] < -FLT_EPSILON);
+						_allocator_saturation(i) = control_allocator_status.unallocated_torque[i];
 					}
 				}
 			}
 
 			// Set saturation flags for control surface controlled axes
-			if (_control_allocator_status_subs[_vehicle_status.is_vtol ? 1 : 0].update(&control_allocator_status)) {
+			if (_vehicle_status.is_vtol ? _control_allocator_status_subs[1].update(&control_allocator_status)
+			    : _control_allocator_status_subs[0].update(&control_allocator_status)) {
+				if (_vehicle_status.is_vtol_tailsitter) {
+					tailsitter_handoff::toFW(Vector3f(control_allocator_status.unallocated_torque)).copyTo(control_allocator_status.unallocated_torque);
+				}
+
 				for (size_t i = 0; i < 3; i++) {
 					if (!diffthr_enabled(i)) {
-						_rate_control.setPositiveSaturationFlag(i, control_allocator_status.unallocated_torque[i] > FLT_EPSILON);
-						_rate_control.setNegativeSaturationFlag(i, control_allocator_status.unallocated_torque[i] < -FLT_EPSILON);
+						_allocator_saturation(i) = control_allocator_status.unallocated_torque[i];
 					}
 				}
 			}
@@ -369,7 +386,17 @@ void FixedwingRateControl::Run()
 			}
 
 			if (_vcontrol_mode.flag_control_rates_enabled) {
-				_rates_sp_sub.update(&_rates_sp);
+				if (_vehicle_status.is_vtol_tailsitter && _vcontrol_mode.flag_control_attitude_enabled) {
+					_virtual_rates_sp_sub.update(&_rates_sp);
+
+				} else {
+					_rates_sp_sub.update(&_rates_sp);
+				}
+
+				for (int i = 0; i < 3; ++i) {
+					_rate_control.setPositiveSaturationFlag(i, _output_saturation(i) > FLT_EPSILON || _allocator_saturation(i) > FLT_EPSILON);
+					_rate_control.setNegativeSaturationFlag(i, _output_saturation(i) < -FLT_EPSILON || _allocator_saturation(i) < -FLT_EPSILON);
+				}
 
 				Vector3f body_rates_setpoint = Vector3f(_rates_sp.roll, _rates_sp.pitch, _rates_sp.yaw);
 
@@ -391,26 +418,79 @@ void FixedwingRateControl::Run()
 
 				_rate_control.setFeedForwardGain(scaled_gain_ff);
 
-				// Run attitude RATE controllers which need the desired attitudes from above, add trim.
-				const Vector3f angular_acceleration_setpoint = _rate_control.update(rates, body_rates_setpoint, angular_accel, dt, _landed);
+				const Vector3f output_gain = _gain_compression.getGains() * (_airspeed_scaling * _airspeed_scaling);
+				const bool initialize_handoff = _vehicle_status.is_vtol_tailsitter
+								&& _in_fw_or_transition_wo_tailsitter_transition && _vcontrol_mode.flag_armed && !_landed
+								&& _handoff.handoff_id != 0 && !_handoff.active && _handoff_initialized != _handoff.handoff_id
+								&& _rates_sp.timestamp > _handoff.handoff_id
+								&& PX4_ISFINITE(_rates_sp.thrust_body[0]) && body_rates_setpoint.isAllFinite()
+								&& PX4_ISFINITE(_handoff.thrust) && Vector3f(_handoff.torque).isAllFinite()
+								&& Vector3f(_handoff.torque_bias).isAllFinite() && Vector3f(_handoff.rates).isAllFinite()
+								&& _handoff.timestamp_sample != 0 && _handoff.handoff_id >= _handoff.timestamp_sample
+								&& _handoff.handoff_id - _handoff.timestamp_sample < tailsitter_handoff::kOutputMaxAge;
+				const Vector3f motor_scale(_handoff.differential_thrust_scale);
+				const Vector3f fw_scale(motor_scale(2), motor_scale(1), motor_scale(0));
 
-				Vector3f control_u = _gain_compression.getGains().emult(angular_acceleration_setpoint * _airspeed_scaling * _airspeed_scaling);
+				if (initialize_handoff) {
+					// The bounded integral carries as much learned bias as possible. The remainder is
+					// a non-integrating runtime trim; output saturation still limits the total command.
+					_handoff_trim = tailsitter_handoff::initializeBias(_rate_control, Vector3f(_handoff.torque_bias),
+							motor_scale, trim, output_gain, _param_fw_rll_to_yaw_ff.get());
+					_handoff_rate_offset = tailsitter_handoff::toFW(Vector3f(_handoff.rates)) - body_rates_setpoint;
 
-				_gain_compression.update(control_u, dt);
+					_handoff_initialized = _handoff.handoff_id;
+					_handoff_elapsed = 0.f;
+					_handoff_ack_pending = true;
+				}
 
-				// Special case yaw in Acro: if the parameter FW_ACRO_YAW_EN is not set then don't rate-control yaw
+				const bool matching = _handoff_initialized != 0 && _handoff_initialized == _handoff.handoff_id;
+				const float remaining = matching ? tailsitter_handoff::remaining(_handoff_elapsed) : 0.f;
+				body_rates_setpoint += remaining * _handoff_rate_offset;
+				const Vector3f angular_acceleration_setpoint = _rate_control.update(rates, body_rates_setpoint, angular_accel, dt,
+						_landed || (matching && !_handoff.active));
+				Vector3f control_u = output_gain.emult(angular_acceleration_setpoint) + _handoff_trim;
+
+				if (!matching) { _gain_compression.update(control_u, dt); }
+
+				// Apply the Acro direct-yaw law before matching the outgoing torque, so this
+				// mode cannot bypass the transient correction. Keep the transferred bias as runtime
+				// trim when this mode deliberately disables the FW yaw integrator.
 				if (!_vcontrol_mode.flag_control_attitude_enabled && _vcontrol_mode.flag_control_manual_enabled
 				    && !_param_fw_acro_yaw_en.get()) {
-					control_u(2) = _manual_control_setpoint.yaw * _param_fw_man_y_sc.get();
+					if (initialize_handoff) {
+						_handoff_trim(2) += output_gain(2) * _rate_control.getIntegral()(2);
+					}
+
+					control_u(2) = _manual_control_setpoint.yaw * _param_fw_man_y_sc.get() + _handoff_trim(2);
 					_rate_control.resetIntegral(2);
 				}
+
+				if (matching && _handoff_elapsed <= FLT_EPSILON) {
+					Vector3f target = tailsitter_handoff::motorToFW(Vector3f(_handoff.torque), motor_scale);
+					// Roll-to-yaw feedforward uses the clipped roll output. A surface-only roll
+					// axis keeps its own controller output rather than the zero motor-space target.
+					const float roll_output = fw_scale(0) > FLT_EPSILON ? target(0) : control_u(0) + trim(0);
+					target(2) -= _param_fw_rll_to_yaw_ff.get() * math::constrain(roll_output, -1.f, 1.f);
+					_handoff_torque_offset = target - control_u - trim;
+
+					for (int i = 0; i < 3; ++i) {
+						if (fw_scale(i) <= FLT_EPSILON) { _handoff_torque_offset(i) = 0.f; }
+					}
+				}
+
+				control_u += remaining * _handoff_torque_offset;
+				_output_saturation = control_u + trim - matrix::constrain(control_u + trim, -1.f, 1.f);
+
+				// Keep the matched controller state fixed until the router accepts it. Updating
+				// compression while waiting would change the very first accepted FW command.
+				if (matching && _handoff.active) { _gain_compression.update(control_u, dt); }
 
 				if (control_u.isAllFinite()) {
 					matrix::constrain(control_u + trim, -1.f, 1.f).copyTo(_vehicle_torque_setpoint.xyz);
 
 				} else {
 					_rate_control.resetIntegral();
-					trim.copyTo(_vehicle_torque_setpoint.xyz);
+					(matching ? Vector3f(NAN, NAN, NAN) : trim).copyTo(_vehicle_torque_setpoint.xyz);
 				}
 
 				float thrust_setpoint = _rates_sp.thrust_body[0];
@@ -436,6 +516,37 @@ void FixedwingRateControl::Run()
 					thrust_setpoint = NAN;
 				}
 
+				if (matching) {
+					const float demand = PX4_ISFINITE(_rates_sp.thrust_body[0])
+							     ? (PX4_ISFINITE(thrust_setpoint) ? math::constrain(thrust_setpoint, 0.f, 1.f) : 0.f) : NAN;
+
+					if (initialize_handoff) {
+						// Optional VTOL parameter; read once per handoff, never modify persistent tuning.
+						float slew_rate{0.f};
+						param_get(param_find("VT_TS_THR_SLEW"), &slew_rate);
+						_throttle_slew.reset(_handoff.thrust, slew_rate);
+					}
+
+					_handoff_tecs_sub.update();
+					const bool underspeed = _vcontrol_mode.flag_control_altitude_enabled
+								&& hrt_elapsed_time(&_handoff_tecs_sub.get().timestamp) < tailsitter_handoff::kOutputMaxAge
+								&& _handoff_tecs_sub.get().underspeed_ratio > FLT_EPSILON;
+					const bool was_active = _throttle_slew.active();
+					thrust_setpoint = _throttle_slew.update(demand,
+										_handoff.active && _handoff_elapsed > FLT_EPSILON ? dt : 0.f, _rates_sp.timestamp, underspeed);
+
+					if (was_active) {
+						tailsitter_handoff_status_s feedback{};
+						feedback.timestamp = hrt_absolute_time();
+						feedback.handoff_id = _handoff.handoff_id;
+						feedback.throttle_slew_active = _throttle_slew.active();
+						feedback.thrust = thrust_setpoint;
+						feedback.demand = demand;
+						feedback.battery_scale = _param_fw_bat_scale_en.get() ? _battery_scale : 1.f;
+						_handoff_status_pub.publish(feedback);
+					}
+				}
+
 				_vehicle_thrust_setpoint.xyz[0] = thrust_setpoint;
 
 			}
@@ -455,14 +566,45 @@ void FixedwingRateControl::Run()
 
 		// Add feed-forward from roll control output to yaw control output
 		// This can be used to counteract the adverse yaw effect when rolling the plane
-		_vehicle_torque_setpoint.xyz[2] = math::constrain(_vehicle_torque_setpoint.xyz[2] + _param_fw_rll_to_yaw_ff.get() *
-						  _vehicle_torque_setpoint.xyz[0], -1.f, 1.f);
+		const float yaw_with_roll_ff = _vehicle_torque_setpoint.xyz[2] + _param_fw_rll_to_yaw_ff.get() *
+					       _vehicle_torque_setpoint.xyz[0];
+		_vehicle_torque_setpoint.xyz[2] = math::constrain(yaw_with_roll_ff, -1.f, 1.f);
+		_output_saturation(2) += yaw_with_roll_ff - _vehicle_torque_setpoint.xyz[2];
 
 		// Tailsitter: rotate back to body frame from airspeed frame
 		if (_vehicle_status.is_vtol_tailsitter) {
 			const float helper = _vehicle_torque_setpoint.xyz[0];
 			_vehicle_torque_setpoint.xyz[0] = _vehicle_torque_setpoint.xyz[2];
 			_vehicle_torque_setpoint.xyz[2] = -helper;
+		}
+
+		if (_handoff_initialized != 0 && _handoff_initialized == _handoff.handoff_id) {
+			if (!_handoff.active && PX4_ISFINITE(_rates_sp.thrust_body[0])
+			    && Vector3f(_vehicle_torque_setpoint.xyz).isAllFinite()) {
+				const Vector3f scale(_handoff.differential_thrust_scale);
+
+				for (int i = 0; i < 3; ++i) {
+					if (scale(i) > FLT_EPSILON) {
+						_vehicle_torque_setpoint.xyz[i] = math::constrain(_handoff.torque[i] / scale(i), -1.f, 1.f);
+					}
+				}
+
+				_vehicle_thrust_setpoint.xyz[0] = _handoff.thrust;
+
+			} else if (_handoff.active) {
+				_handoff_elapsed += dt;
+			}
+
+			if (_handoff_ack_pending && angular_velocity.timestamp_sample > _handoff.handoff_id
+			    && Vector3f(_vehicle_torque_setpoint.xyz).isAllFinite()
+			    && PX4_ISFINITE(_vehicle_thrust_setpoint.xyz[0])) {
+				tailsitter_handoff_s ack{};
+				ack.timestamp = hrt_absolute_time();
+				ack.timestamp_sample = angular_velocity.timestamp_sample;
+				ack.handoff_id = _handoff.handoff_id;
+				_handoff_ack_pub.publish(ack);
+				_handoff_ack_pending = false;
+			}
 		}
 
 		/* Only publish if any of the proper modes are enabled */

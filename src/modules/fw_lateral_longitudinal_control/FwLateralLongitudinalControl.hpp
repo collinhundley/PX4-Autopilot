@@ -61,6 +61,9 @@
 #include <uORB/Publication.hpp>
 #include <uORB/PublicationMulti.hpp>
 #include <uORB/Subscription.hpp>
+#include <uORB/topics/tailsitter_handoff.h>
+#include <uORB/topics/tailsitter_handoff_status.h>
+#include <uORB/topics/battery_status.h>
 #include <uORB/SubscriptionCallback.hpp>
 #include <uORB/topics/airspeed_validated.h>
 #include <uORB/topics/fixed_wing_lateral_setpoint.h>
@@ -207,6 +210,11 @@ private:
 	perf_counter_t _loop_perf; // loop performance counter
 
 	PerformanceModel _performance_model;
+	uORB::SubscriptionData<tailsitter_handoff_s> _handoff_sub{ORB_ID(tailsitter_handoff)};
+	uORB::SubscriptionData<battery_status_s> _handoff_battery_sub{ORB_ID(battery_status)};
+	uORB::SubscriptionData<tailsitter_handoff_status_s> _handoff_status_sub{ORB_ID(tailsitter_handoff_status)};
+	uint64_t _tecs_handoff_id{0};
+	float _handoff_initial_throttle{0.f};
 	TECS _tecs;
 	CourseToAirspeedRefMapper _course_to_airspeed;
 	AirspeedDirectionController _airspeed_direction_control;

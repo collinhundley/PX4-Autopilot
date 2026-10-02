@@ -265,6 +265,8 @@ public:
 	void handleEkfResets();
 
 protected:
+	virtual bool usesFwThrottleHandoff() const { return false; }
+
 	VtolAttitudeControl *_attc;
 	mode _common_vtol_mode;
 

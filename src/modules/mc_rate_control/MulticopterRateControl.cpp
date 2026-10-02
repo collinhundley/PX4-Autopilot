@@ -215,6 +215,8 @@ MulticopterRateControl::Run()
 				_rate_control.setSaturationStatus(saturation_positive, saturation_negative);
 			}
 
+			const Vector3f outgoing_integral = _rate_control.getIntegral();
+
 			// run rate controller
 			Vector3f torque_setpoint =
 				_rate_control.update(rates, _rates_setpoint, angular_accel, dt, _maybe_landed || _landed);
@@ -253,6 +255,19 @@ MulticopterRateControl::Run()
 						vehicle_torque_setpoint.xyz[i] = math::constrain(vehicle_torque_setpoint.xyz[i] * _battery_status_scale, -1.f, 1.f);
 					}
 				}
+			}
+
+			if (_vehicle_status.is_vtol_tailsitter
+			    && _vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING) {
+				tailsitter_handoff_s state{};
+				state.timestamp = hrt_absolute_time();
+				state.timestamp_sample = angular_velocity.timestamp_sample;
+				Vector3f(vehicle_torque_setpoint.xyz).copyTo(state.torque);
+				const float scale = _param_mc_bat_scale_en.get() && _battery_status_scale > 0.f ? _battery_status_scale : 1.f;
+				matrix::constrain(outgoing_integral * scale, -1.f, 1.f).copyTo(state.torque_bias);
+				_rates_setpoint.copyTo(state.rates);
+				state.thrust = -vehicle_thrust_setpoint.xyz[2];
+				_handoff_state_pub.publish(state);
 			}
 
 			vehicle_thrust_setpoint.timestamp_sample = angular_velocity.timestamp_sample;

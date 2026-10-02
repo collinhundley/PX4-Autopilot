@@ -96,10 +96,16 @@ public:
 	matrix::Vector3f update(const matrix::Vector3f &rate, const matrix::Vector3f &rate_sp,
 				const matrix::Vector3f &angular_accel, const float dt, const bool landed);
 
-	/**
-	 * Set the integral term to 0 to prevent windup
-	 * @see _rate_int
-	 */
+	/** Read/seed runtime integral state without changing controller parameters. */
+	matrix::Vector3f getIntegral() const { return _rate_int; }
+	void setIntegral(const matrix::Vector3f &integral)
+	{
+		for (int i = 0; i < 3; ++i) {
+			_rate_int(i) = PX4_ISFINITE(integral(i)) ? math::constrain(integral(i), -_lim_int(i), _lim_int(i)) : 0.f;
+		}
+	}
+
+	/** Set the integral term to 0 to prevent windup. */
 	void resetIntegral() { _rate_int.zero(); }
 
 	/**

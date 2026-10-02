@@ -53,6 +53,7 @@
 #include <uORB/topics/manual_control_setpoint.h>
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/rate_ctrl_status.h>
+#include <uORB/topics/tailsitter_handoff.h>
 #include <uORB/topics/vehicle_angular_velocity.h>
 #include <uORB/topics/vehicle_control_mode.h>
 #include <uORB/topics/vehicle_land_detected.h>
@@ -83,6 +84,7 @@ public:
 	bool init();
 
 private:
+	uORB::Publication<tailsitter_handoff_s> _handoff_state_pub{ORB_ID(tailsitter_handoff_mc)};
 	void Run() override;
 
 	/**

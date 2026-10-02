@@ -278,7 +278,9 @@ VtolAttitudeControl::update_callbacks()
 
 	case mode::FIXED_WING:
 		if (_vehicle_torque_setpoint_virtual_fw_sub.registerCallback()) {
-			_vehicle_torque_setpoint_virtual_mc_sub.unregisterCallback();
+			if (!_vehicle_status.is_vtol_tailsitter) {
+				_vehicle_torque_setpoint_virtual_mc_sub.unregisterCallback();
+			}
 		}
 
 		break;
@@ -352,7 +354,7 @@ VtolAttitudeControl::Run()
 		break;
 
 	case mode::FIXED_WING:
-		should_run = updated_fw_in;
+		should_run = updated_fw_in || (_vehicle_status.is_vtol_tailsitter && updated_mc_in);
 		break;
 	}
 

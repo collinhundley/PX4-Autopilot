@@ -204,6 +204,46 @@ void FwLateralLongitudinalControl::Run()
 				_fw_longitudinal_ctrl_sub.copy(&_long_control_sp);
 			}
 
+			_handoff_sub.update();
+
+			if (_vehicle_status_sub.get().is_vtol_tailsitter && _handoff_sub.get().handoff_id != 0
+			    && _handoff_sub.get().handoff_id != _tecs_handoff_id) {
+				_tecs_handoff_id = _handoff_sub.get().handoff_id;
+				_airspeed_slew_rate_controller.setForcedValue(NAN);
+				float throttle = _handoff_sub.get().thrust;
+				// TECS works before the FW battery scaling; the transfer carries the actual motor command.
+				int32_t battery_scaling{0};
+				param_get(param_find("FW_BAT_SCALE_EN"), &battery_scaling);
+				_handoff_battery_sub.update();
+
+				if (battery_scaling && _handoff_battery_sub.get().connected && _handoff_battery_sub.get().scale > 0.f) {
+					throttle /= _handoff_battery_sub.get().scale;
+				}
+
+				_handoff_initial_throttle = throttle;
+				_tecs.initializeForHandoff();
+			}
+
+			_handoff_status_sub.update();
+			float applied_throttle = NAN;
+			float throttle_saturation = 0.f;
+			const auto &feedback = _handoff_status_sub.get();
+
+			if (_vehicle_status_sub.get().is_vtol_tailsitter && _handoff_sub.get().handoff_id != 0) {
+				if (feedback.handoff_id == _handoff_sub.get().handoff_id && feedback.throttle_slew_active
+				    && hrt_elapsed_time(&feedback.timestamp) < 100_ms && PX4_ISFINITE(feedback.thrust)
+				    && PX4_ISFINITE(feedback.demand) && PX4_ISFINITE(feedback.battery_scale) && feedback.battery_scale > 0.f) {
+					applied_throttle = feedback.thrust / feedback.battery_scale;
+					throttle_saturation = feedback.demand - feedback.thrust;
+
+				} else if (!_handoff_sub.get().active) {
+					applied_throttle = _handoff_initial_throttle;
+					throttle_saturation = _tecs.get_throttle_setpoint() - applied_throttle;
+				}
+			}
+
+			_tecs.setThrottleTracking(applied_throttle, throttle_saturation);
+
 			const float airspeed_sp_eas = adapt_airspeed_setpoint(control_interval, _long_control_sp.equivalent_airspeed,
 						      _min_airspeed_from_guidance, _lateral_control_state.wind_speed.length());
 

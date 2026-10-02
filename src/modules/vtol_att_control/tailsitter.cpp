@@ -40,6 +40,7 @@
 */
 
 #include "tailsitter.h"
+#include <lib/rate_control/tailsitter_handoff.hpp>
 #include "vtol_att_control_main.h"
 
 using namespace matrix;
@@ -47,6 +48,7 @@ using namespace matrix;
 Tailsitter::Tailsitter(VtolAttitudeControl *attc) :
 	VtolType(attc)
 {
+	_handoff_pub.advertise();
 }
 
 void
@@ -98,8 +100,30 @@ bool Tailsitter::isRollExceeded()
 	return false;
 }
 
+void Tailsitter::startHandoff()
+{
+	_handoff = {};
+	_handoff_active_timestamp = 0;
+	_handoff_motor_residual.zero();
+	_handoff_mc_sub.copy(&_handoff);
+	// Snapshot the command actually routed to the motors, not an unused/new MC sample.
+	Vector3f(_torque_setpoint_0->xyz).copyTo(_handoff.torque);
+	_handoff.thrust = -_thrust_setpoint_0->xyz[2];
+	_handoff.timestamp = hrt_absolute_time();
+	_handoff.handoff_id = _trans_finished_ts;
+	_handoff.active = false;
+	_handoff.differential_thrust_scale[0] = (_param_vt_fw_difthr_en.get() & static_cast<int32_t>(VtFwDifthrEnBits::YAW_BIT)) ?
+						_param_vt_fw_difthr_s_y.get() : 0.f;
+	_handoff.differential_thrust_scale[1] = (_param_vt_fw_difthr_en.get() & static_cast<int32_t>(VtFwDifthrEnBits::PITCH_BIT)) ?
+						_param_vt_fw_difthr_s_p.get() : 0.f;
+	_handoff.differential_thrust_scale[2] = (_param_vt_fw_difthr_en.get() & static_cast<int32_t>(VtFwDifthrEnBits::ROLL_BIT)) ?
+						_param_vt_fw_difthr_s_r.get() : 0.f;
+	_handoff_pub.publish(_handoff);
+}
+
 void Tailsitter::update_vtol_state()
 {
+	const vtol_mode previous_mode = _vtol_mode;
 	/* simple logic using a two way switch to perform transitions.
 	 * after flipping the switch the vehicle will start tilting in MC control mode, picking up
 	 * forward speed. After the vehicle has picked up enough and sufficient pitch angle the uav will go into FW mode.
@@ -170,6 +194,15 @@ void Tailsitter::update_vtol_state()
 			_trans_finished_ts = hrt_absolute_time();
 			break;
 		}
+	}
+
+	if (_vtol_mode == vtol_mode::FW_MODE && previous_mode != vtol_mode::FW_MODE) {
+		startHandoff();
+
+	} else if (_vtol_mode != vtol_mode::FW_MODE && _handoff.handoff_id != 0) {
+		_handoff = {};
+		_handoff.timestamp = hrt_absolute_time();
+		_handoff_pub.publish(_handoff);
 	}
 
 	// map tailsitter specific control phases to simple control modes
@@ -302,6 +335,8 @@ void Tailsitter::update_fw_state()
 */
 void Tailsitter::fill_actuator_outputs()
 {
+	const Vector3f previous_torque(_torque_setpoint_0->xyz);
+	const float previous_thrust = _thrust_setpoint_0->xyz[2];
 	_torque_setpoint_0->timestamp = hrt_absolute_time();
 	_torque_setpoint_0->timestamp_sample = _vehicle_torque_setpoint_virtual_mc->timestamp_sample;
 	_torque_setpoint_0->xyz[0] = 0.f;
@@ -344,14 +379,53 @@ void Tailsitter::fill_actuator_outputs()
 			_torque_setpoint_0->xyz[2] = _vehicle_torque_setpoint_virtual_fw->xyz[2] * _param_vt_fw_difthr_s_r.get();
 		}
 
-		// for the short period after switching to FW where there is no thrust published yet from the FW controller,
-		// keep publishing the last MC thrust to keep the motors running
-		if (hrt_elapsed_time(&_trans_finished_ts) < 50_ms) {
-			_thrust_setpoint_0->xyz[2] = _last_thr_in_mc;
-			_torque_setpoint_0->xyz[0] = 0.f;
-			_torque_setpoint_0->xyz[1] = 0.f;
-			_torque_setpoint_0->xyz[2] = 0.f;
+		// Accept only a matched controller generation with both outputs present. A timer cannot
+		// distinguish a delayed publication from a fresh zero/uninitialized FW command.
+		tailsitter_handoff_s ack{};
+		_handoff_ack_sub.copy(&ack);
+		const bool outputs_valid = Vector3f(_vehicle_torque_setpoint_virtual_fw->xyz).isAllFinite()
+					   && PX4_ISFINITE(_vehicle_thrust_setpoint_virtual_fw->xyz[0])
+					   && hrt_elapsed_time(&_vehicle_torque_setpoint_virtual_fw->timestamp) < tailsitter_handoff::kOutputMaxAge
+					   && hrt_elapsed_time(&_vehicle_thrust_setpoint_virtual_fw->timestamp) < tailsitter_handoff::kOutputMaxAge;
+		const bool ready = outputs_valid && (tailsitter_handoff::ready(_handoff.handoff_id, ack.handoff_id,
+						     ack.timestamp_sample, _vehicle_torque_setpoint_virtual_fw->timestamp_sample,
+						     _vehicle_thrust_setpoint_virtual_fw->timestamp_sample)
+						     || ((!_v_control_mode->flag_control_rates_enabled || !_v_control_mode->flag_armed || _land_detected->landed)
+								     && _vehicle_torque_setpoint_virtual_fw->timestamp > _handoff.handoff_id
+								     && _vehicle_thrust_setpoint_virtual_fw->timestamp > _handoff.handoff_id));
+
+		if (!_handoff.active) {
+			_handoff_motor_residual = Vector3f(_handoff.torque) - Vector3f(_torque_setpoint_0->xyz);
+			_thrust_setpoint_0->xyz[2] = -_handoff.thrust;
+			Vector3f(_handoff.torque).copyTo(_torque_setpoint_0->xyz);
+
+			if (ready) {
+				_handoff_active_timestamp = hrt_absolute_time();
+				_last_valid_fw_output = _handoff_active_timestamp;
+				_handoff.active = true;
+				_handoff.timestamp = hrt_absolute_time();
+				_handoff_pub.publish(_handoff);
+
+			} else if (hrt_elapsed_time(&_trans_finished_ts) > tailsitter_handoff::kOutputTimeout && _v_control_mode->flag_armed) {
+				_attc->quadchute(QuadchuteReason::TransitionTimeout);
+			}
+
+		} else if (!outputs_valid) {
+			previous_torque.copyTo(_torque_setpoint_0->xyz);
+			_thrust_setpoint_0->xyz[2] = previous_thrust;
+
+			if (hrt_elapsed_time(&_last_valid_fw_output) > tailsitter_handoff::kOutputTimeout) {
+				_attc->quadchute(QuadchuteReason::TransitionTimeout);
+			}
+
+		} else {
+			_last_valid_fw_output = hrt_absolute_time();
+			const float elapsed = hrt_elapsed_time(&_handoff_active_timestamp) * 1e-6f;
+			matrix::constrain(Vector3f(_torque_setpoint_0->xyz)
+					  + tailsitter_handoff::remaining(elapsed) * _handoff_motor_residual, -1.f, 1.f).copyTo(_torque_setpoint_0->xyz);
 		}
+
+		_last_thr_in_fw_mode = -_thrust_setpoint_0->xyz[2];
 
 	} else {
 		_thrust_setpoint_0->xyz[2] = _vehicle_thrust_setpoint_virtual_mc->xyz[2];

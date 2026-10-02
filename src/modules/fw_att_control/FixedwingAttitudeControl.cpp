@@ -53,6 +53,8 @@ FixedwingAttitudeControl::FixedwingAttitudeControl(bool vtol) :
 	parameters_update();
 	_landing_gear_wheel_pub.advertise();
 	_attitude_sp_pub.advertise();
+
+	if (vtol) { _virtual_rate_sp_pub.advertise(); }
 }
 
 FixedwingAttitudeControl::~FixedwingAttitudeControl()
@@ -112,6 +114,8 @@ FixedwingAttitudeControl::vehicle_manual_poll(const float yaw_body)
 				q.copyTo(_att_sp.q_d);
 
 				_att_sp.thrust_body[0] = (_manual_control_setpoint.throttle + 1.f) * .5f;
+				_att_sp.thrust_body[1] = 0.f;
+				_att_sp.thrust_body[2] = 0.f;
 
 				_att_sp.timestamp = hrt_absolute_time();
 
@@ -127,12 +131,11 @@ FixedwingAttitudeControl::vehicle_attitude_setpoint_poll()
 	vehicle_attitude_setpoint_s att_sp{};
 
 	if (_att_sp_sub.update(&att_sp)) {
+		_att_sp.timestamp = att_sp.timestamp;
 		const Quatf q_d(att_sp.q_d);
 		q_d.copyTo(_att_sp.q_d);
 
-		_rates_sp.thrust_body[0] = att_sp.thrust_body[0];
-		_rates_sp.thrust_body[1] = att_sp.thrust_body[1];
-		_rates_sp.thrust_body[2] = att_sp.thrust_body[2];
+		Vector3f(att_sp.thrust_body).copyTo(_att_sp.thrust_body);
 	}
 }
 
@@ -325,10 +328,30 @@ void FixedwingAttitudeControl::Run()
 					_rates_sp.roll = body_rates_setpoint(0);
 					_rates_sp.pitch = body_rates_setpoint(1);
 					_rates_sp.yaw = body_rates_setpoint(2);
+					// Keep thrust paired with the attitude target and its source timestamp,
+					// including a freshly generated manual target before it has routed back via VTOL.
+					Vector3f(_att_sp.thrust_body).copyTo(_rates_sp.thrust_body);
 
 					_rates_sp.timestamp = hrt_absolute_time();
 
 					_rate_sp_pub.publish(_rates_sp);
+
+					if (_vehicle_status.is_vtol_tailsitter) {
+						_handoff_sub.update();
+						_handoff_tecs_sub.update();
+						const auto &handoff = _handoff_sub.get();
+						const bool tecs_ready = !_vcontrol_mode.flag_control_altitude_enabled
+									|| (_handoff_tecs_sub.get().timestamp > handoff.handoff_id
+									    && _att_sp.timestamp >= _handoff_tecs_sub.get().timestamp);
+
+						if (handoff.active || handoff.handoff_id == 0 || (tecs_ready && _att_sp.timestamp > handoff.handoff_id)) {
+							vehicle_rates_setpoint_s virtual_rates_sp = _rates_sp;
+							// Preserve the demand's generation time: republishing an unchanged TECS
+							// target must not count as a new sample when checking handoff convergence.
+							virtual_rates_sp.timestamp = _att_sp.timestamp;
+							_virtual_rate_sp_pub.publish(virtual_rates_sp);
+						}
+					}
 				}
 			}
 		}

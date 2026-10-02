@@ -204,3 +204,83 @@ TEST(TECSControlTest, PitchIntegratorSurvivesSustainedNonFiniteInput)
 		EXPECT_TRUE(PX4_ISFINITE(control.getPitchSetpoint()));
 	}
 }
+
+
+TEST(TECSControlTest, HandoffTrackingPreventsWindupAndAllowsUnwinding)
+{
+	for (float sign : {-1.f, 1.f}) {
+		TECSControl control;
+		auto param = makeParam();
+		auto input = makeInput();
+		auto setpoint = makeSetpoint();
+		control.initialize(setpoint, input, param, makeFlag());
+		setpoint.altitude_rate_setpoint_direct = sign;
+		control.setThrottleTracking(.5f, sign);
+
+		for (int i = 0; i < 100; ++i) { control.update(.02f, setpoint, input, param, makeFlag()); }
+
+		EXPECT_FLOAT_EQ(control.getDebugOutput().throttle_integrator, 0.f);
+		setpoint.altitude_rate_setpoint_direct = -sign;
+		control.update(.02f, setpoint, input, param, makeFlag());
+		EXPECT_LT(sign * control.getDebugOutput().throttle_integrator, 0.f);
+		control.setThrottleTracking(NAN, 0.f);
+		setpoint.altitude_rate_setpoint_direct = sign;
+
+		for (int i = 0; i < 10; ++i) { control.update(.02f, setpoint, input, param, makeFlag()); }
+
+		EXPECT_GT(sign * control.getDebugOutput().throttle_integrator, 0.f);
+	}
+}
+
+TEST(TECSControlTest, ExistingThrottleSlewUsesAppliedOutputDuringHandoffThenReturnsToNormal)
+{
+	TECSControl control;
+	auto param = makeParam();
+	param.throttle_slewrate = .1f;
+	auto input = makeInput();
+	auto setpoint = makeSetpoint();
+	control.setThrottleTracking(.2f, 1.f);
+	control.initialize(setpoint, input, param, makeFlag());
+	EXPECT_FLOAT_EQ(control.getThrottleSetpoint(), .2f);
+	setpoint.tas_setpoint = 20.f;
+	control.update(.02f, setpoint, input, param, makeFlag());
+	EXPECT_NEAR(control.getThrottleSetpoint(), .202f, 1e-6f);
+	// The applied command did not advance: do not build an independent ramp ahead of it.
+	control.update(.02f, setpoint, input, param, makeFlag());
+	EXPECT_NEAR(control.getThrottleSetpoint(), .202f, 1e-6f);
+	control.setThrottleTracking(NAN, 0.f);
+	control.update(.02f, setpoint, input, param, makeFlag());
+	EXPECT_NEAR(control.getThrottleSetpoint(), .204f, 1e-6f);
+}
+
+TEST(TECSControlTest, HandoffComputesNormalDemandWithoutSyntheticIntegralAndKeepsUnderspeedProtection)
+{
+	TECSControl control;
+	auto param = makeParam();
+	auto input = makeInput();
+	control.setThrottleTracking(.2f, 1.f);
+	control.initialize(makeSetpoint(), input, param, makeFlag());
+	EXPECT_FLOAT_EQ(control.getThrottleSetpoint(), param.throttle_trim);
+	EXPECT_FLOAT_EQ(control.getDebugOutput().throttle_integrator, 0.f);
+	input.tas = 1.f;
+	control.update(.02f, makeSetpoint(), input, param, makeFlag());
+	EXPECT_FLOAT_EQ(control.getThrottleSetpoint(), param.throttle_max);
+}
+
+TEST(TECSControlTest, InitializationUsesTheSameHeightRateLawAsUpdate)
+{
+	for (float rate : {-.5f, 0.f, .5f}) {
+		TECSControl control;
+		auto param = makeParam();
+		param.altitude_setpoint_gain_ff = .5f;
+		auto input = makeInput();
+		input.altitude_rate = rate;
+		auto setpoint = makeSetpoint();
+		setpoint.altitude_reference.alt_rate = rate;
+		setpoint.altitude_rate_setpoint_direct = rate;
+		control.initialize(setpoint, input, param, makeFlag());
+		const float initialized = control.getThrottleSetpoint();
+		control.update(.01f, setpoint, input, param, makeFlag());
+		EXPECT_NEAR(control.getThrottleSetpoint(), initialized, 1e-6f);
+	}
+}

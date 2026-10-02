@@ -228,7 +228,10 @@ void TECSControl::initialize(const Setpoint &setpoint, const Input &input, Param
 
 	control_setpoint.tas_rate_setpoint = _calcAirspeedControlOutput(setpoint, input, param, flag);
 
-	control_setpoint.altitude_rate_setpoint = _calcAltitudeControlOutput(setpoint, input, param);
+	// Initialise the same control law used by update(). Otherwise a nonzero climb
+	// rate creates a throttle/pitch step on the first update after the handoff.
+	control_setpoint.altitude_rate_setpoint = PX4_ISFINITE(setpoint.altitude_rate_setpoint_direct)
+			? setpoint.altitude_rate_setpoint_direct : _calcAltitudeControlOutput(setpoint, input, param);
 
 	SpecificEnergyRates specific_energy_rate{_calcSpecificEnergyRates(control_setpoint, input)};
 
@@ -246,6 +249,13 @@ void TECSControl::initialize(const Setpoint &setpoint, const Input &input, Param
 	ControlValues ste_rate{_calcThrottleControlSteRate(limit, specific_energy_rate, param)};
 
 	_throttle_setpoint = _calcThrottleControlOutput(limit, ste_rate, param, flag);
+
+	// With an existing throttle slew, start that same limiter at the applied command.
+	// Do not encode the outgoing MC collective as a synthetic TECS integral bias:
+	// the handoff limiter acquires the normal energy-controller demand instead.
+	if (PX4_ISFINITE(_applied_throttle) && param.throttle_slewrate > FLT_EPSILON && _ratio_undersped < FLT_EPSILON) {
+		_throttle_setpoint = constrain(_applied_throttle, param.throttle_min, param.throttle_max);
+	}
 
 	// Debug output
 	_debug_output.total_energy_rate_estimate = ste_rate.estimate;
@@ -544,8 +554,11 @@ void TECSControl::_calcThrottleControl(float dt, const SpecificEnergyRates &spec
 	// Rate limit the throttle demand
 	if (fabsf(param.throttle_slewrate) > FLT_EPSILON) {
 		const float throttle_increment_limit = dt * (param.throttle_max - param.throttle_min) * param.throttle_slewrate;
-		throttle_setpoint = constrain(throttle_setpoint, _throttle_setpoint - throttle_increment_limit,
-					      _throttle_setpoint + throttle_increment_limit);
+		// While handing off, both slew constraints start at the applied collective. This avoids
+		// a TECS ramp advancing independently ahead of the downstream handoff limiter.
+		const float previous = PX4_ISFINITE(_applied_throttle) ? _applied_throttle : _throttle_setpoint;
+		throttle_setpoint = constrain(throttle_setpoint, previous - throttle_increment_limit,
+					      previous + throttle_increment_limit);
 	}
 
 	_throttle_setpoint = constrain(throttle_setpoint, param.throttle_min, param.throttle_max);
@@ -589,12 +602,12 @@ void TECSControl::_calcThrottleControlUpdate(float dt, const STERateLimit &limit
 						     STE_rate_to_throttle * (1.0f - _ratio_undersped);
 
 			// only allow integrator propagation into direction which unsaturates throttle
-			if (_throttle_setpoint >= param.throttle_max) {
+			if (_throttle_setpoint >= param.throttle_max || _throttle_saturation > FLT_EPSILON) {
 				throttle_integ_input = math::min(0.f, throttle_integ_input);
 
 			}
 
-			if (_throttle_setpoint <= param.throttle_min) {
+			if (_throttle_setpoint <= param.throttle_min || _throttle_saturation < -FLT_EPSILON) {
 				throttle_integ_input = math::max(0.f, throttle_integ_input);
 			}
 
@@ -653,7 +666,6 @@ float TECSControl::_calcThrottleControlOutput(const STERateLimit &limit, const C
 		throttle_setpoint += math::max(0.0f, _throttle_integ_state);
 	}
 
-
 	// ramp in max throttle setting with underspeediness value
 	throttle_setpoint = _ratio_undersped * param.throttle_max + (1.0f - _ratio_undersped) * throttle_setpoint;
 
@@ -689,7 +701,7 @@ float TECS::calcTrueAirspeedSetpoint(float eas_to_tas, float eas_setpoint)
 }
 
 void TECS::initialize(const float altitude, const float altitude_rate, const float equivalent_airspeed,
-		      float eas_to_tas)
+		      float eas_to_tas, bool height_rate_control)
 {
 	// Init subclasses
 	TECSAltitudeReferenceModel::AltitudeReferenceState current_state{.alt = altitude,
@@ -701,7 +713,7 @@ void TECS::initialize(const float altitude, const float altitude_rate, const flo
 	TECSControl::Setpoint control_setpoint;
 	control_setpoint.altitude_reference = _altitude_reference_model.getAltitudeReference();
 	control_setpoint.altitude_rate_setpoint_direct =
-		_altitude_reference_model.getAltitudeReference().alt_rate; // init to reference altitude rate
+		height_rate_control ? _altitude_reference_model.getAltitudeReference().alt_rate : NAN;
 	control_setpoint.tas_setpoint = equivalent_airspeed * eas_to_tas;
 
 	const TECSControl::Input control_input{ .altitude = altitude,
@@ -734,7 +746,7 @@ void TECS::update(float pitch, float altitude, float hgt_setpoint, float EAS_set
 
 	if (dt > DT_MAX || _update_timestamp == 0UL) {
 		// Update time intervall too large, can't guarantee sanity of state updates anymore. reset the control loop.
-		initialize(altitude, hgt_rate, equivalent_airspeed, eas_to_tas);
+		initialize(altitude, hgt_rate, equivalent_airspeed, eas_to_tas, PX4_ISFINITE(hgt_rate_sp));
 
 	} else {
 		/* Check if we want to fast descend. On fast descend, we set the throttle to min, and use the altitude control

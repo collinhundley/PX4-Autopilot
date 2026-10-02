@@ -167,6 +167,10 @@ void LoggedTopics::add_default_topics()
 	add_optional_topic_multi("airspeed_wind", 1000, 4);
 	add_optional_topic_multi("control_allocator_status", 200, 2);
 	add_optional_topic_multi("rate_ctrl_status", 200, 2);
+	// These are first published at handoff, after the logger has started.
+	add_topic("tailsitter_handoff");
+	add_topic("tailsitter_handoff_ack");
+	add_topic("tailsitter_handoff_status", 20);
 	add_optional_topic_multi("sensor_hygrometer", 500, 4);
 	add_optional_topic_multi("sensor_temp", 100, 4);
 	add_optional_topic_multi("rpm", 200);
@@ -251,6 +255,9 @@ void LoggedTopics::add_default_topics()
 
 #ifdef CONFIG_ARCH_BOARD_PX4_SITL
 	add_topic("fw_virtual_attitude_setpoint");
+	add_topic("tailsitter_handoff_mc", 20);
+	add_topic("vehicle_rates_setpoint_virtual_fw");
+	add_topic("tecs_status", 20);
 	add_topic("mc_virtual_attitude_setpoint");
 	add_optional_topic("vehicle_torque_setpoint_virtual_mc");
 	add_optional_topic("vehicle_torque_setpoint_virtual_fw");

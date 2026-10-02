@@ -43,6 +43,25 @@ parameters:
       max: 20.0
       increment: 1
       decimal: 2
+    VT_TS_THR_SLEW:
+      description:
+        short: Tailsitter forward handoff throttle slew
+        long: |-
+          Maximum collective throttle reduction per second while the multicopter
+          to fixed-wing handoff acquires the live FW demand. Increases use twice
+          this rate to preserve lift and airspeed margin; underspeed protection
+          bypasses the additional increase limit. No special pilot-stick bypass.
+          Stops limiting once output and demand slew agree. It does not rearm
+          for later demand changes, and has no effect in normal FW, hover or
+          back-transition. Existing TECS throttle slew is retained.
+          Zero disables the slew but retains first-output matching.
+      type: float
+      default: 0.2
+      unit: 1/s
+      min: 0.0
+      max: 10.0
+      increment: 0.05
+      decimal: 2
     VT_F_TRANS_THR:
       description:
         short: Target throttle value for the transition to fixed-wing flight
