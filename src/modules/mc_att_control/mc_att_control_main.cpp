@@ -320,13 +320,14 @@ MulticopterAttitudeControl::Run()
 				if (_vehicle_attitude_setpoint_sub.copy(&vehicle_attitude_setpoint)
 				    && (vehicle_attitude_setpoint.timestamp > _last_attitude_setpoint)) {
 
-					const float setpoint_dt = (_last_attitude_setpoint > 0)
+					const float setpoint_dt = (_last_attitude_setpoint > 0 && !_reset_attitude_reference)
 								  ? (vehicle_attitude_setpoint.timestamp - _last_attitude_setpoint) * 1e-6f
 								  : -1.f;
 					_attitude_control.setAttitudeSetpoint(Quatf(vehicle_attitude_setpoint.q_d),
 									      vehicle_attitude_setpoint.yaw_sp_move_rate, setpoint_dt);
 					_thrust_setpoint_body = Vector3f(vehicle_attitude_setpoint.thrust_body);
 					_last_attitude_setpoint = vehicle_attitude_setpoint.timestamp;
+					_reset_attitude_reference = false;
 				}
 			}
 
@@ -377,7 +378,14 @@ MulticopterAttitudeControl::Run()
 
 			_vehicle_rates_setpoint_pub.publish(rates_setpoint);
 
+			if (_vtol_tailsitter) {
+				// A fresh gyro update must not make a pre-transition attitude/thrust target look fresh.
+				rates_setpoint.timestamp = _last_attitude_setpoint;
+				_virtual_rates_pub.publish(rates_setpoint);
+			}
+
 		} else {
+			_reset_attitude_reference = _vtol_tailsitter;
 			_man_roll_input_filter.reset(0.f);
 			_man_pitch_input_filter.reset(0.f);
 			_yaw_setpoint_stabilized = NAN;

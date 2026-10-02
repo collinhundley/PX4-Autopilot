@@ -107,6 +107,7 @@ public:
 private:
 	uORB::Subscription _handoff_sub{ORB_ID(tailsitter_handoff)};
 	uORB::Publication<tailsitter_handoff_s> _handoff_ack_pub{ORB_ID(tailsitter_handoff_ack)};
+	uORB::Publication<tailsitter_handoff_s> _handoff_state_pub{ORB_ID(tailsitter_handoff_fw)};
 	uORB::Subscription _virtual_rates_sp_sub{ORB_ID(vehicle_rates_setpoint_virtual_fw)};
 	tailsitter_handoff_s _handoff{};
 	uint64_t _handoff_initialized{0};

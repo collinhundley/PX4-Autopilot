@@ -46,6 +46,9 @@
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/tailsitter_handoff.h>
+#include <uORB/topics/tailsitter_handoff_status.h>
+#include <uORB/topics/vehicle_angular_velocity.h>
+#include <uORB/topics/control_allocator_status.h>
 
 #include <parameters/param.h>
 #include <drivers/drv_hrt.h>
@@ -57,9 +60,6 @@ static constexpr float PITCH_THRESHOLD_AUTO_TRANSITION_TO_FW = -1.05f; // -60°
 // [rad] Pitch threshold required for completing transition to hover in automatic transitions
 static constexpr float PITCH_THRESHOLD_AUTO_TRANSITION_TO_MC = -0.26f; // -15°
 
-// [s] Thrust blending duration from fixed-wing to back transition throttle
-static constexpr float B_TRANS_THRUST_BLENDING_DURATION = 0.5f;
-
 class Tailsitter : public VtolType
 {
 	friend class TailsitterHandoffTest;
@@ -70,22 +70,32 @@ public:
 
 	void update_vtol_state() override;
 	void update_transition_state() override;
+	void update_mc_state() override;
 	void update_fw_state() override;
 	void fill_actuator_outputs() override;
 	void waiting_on_tecs() override;
 	void blendThrottleAfterFrontTransition(float scale) override;
-	void blendThrottleBeginningBackTransition(float scale);
 
 private:
 	uORB::Subscription _handoff_mc_sub{ORB_ID(tailsitter_handoff_mc)};
+	uORB::Subscription _handoff_fw_sub{ORB_ID(tailsitter_handoff_fw)};
+	uORB::Subscription _angular_velocity_sub{ORB_ID(vehicle_angular_velocity)};
+	uORB::Subscription _allocator_sub{ORB_ID(control_allocator_status)};
 	uORB::Subscription _handoff_ack_sub{ORB_ID(tailsitter_handoff_ack)};
 	uORB::Publication<tailsitter_handoff_s> _handoff_pub{ORB_ID(tailsitter_handoff)};
 	tailsitter_handoff_s _handoff{};
 	matrix::Vector3f _handoff_motor_residual{};
 	hrt_abstime _handoff_active_timestamp{0};
 	hrt_abstime _last_valid_fw_output{0};
+	hrt_abstime _mc_takeover_timestamp{0};
+	hrt_abstime _back_transition_end_timestamp{0};
+	matrix::Vector3f _back_attitude_offset{};
+	uORB::Subscription _handoff_status_sub{ORB_ID(tailsitter_handoff_status)};
 
-	void startHandoff();
+	void startHandoff(bool to_mc = false);
+	void startBackHandoff();
+	void cancelHandoff();
+	bool backHandoffSafe();
 	bool usesFwThrottleHandoff() const override { return true; }
 
 	enum class vtol_mode {

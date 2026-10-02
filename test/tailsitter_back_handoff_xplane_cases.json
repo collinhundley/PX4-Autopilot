@@ -1,0 +1,77 @@
+[
+  {
+    "name": "calm-28",
+    "cruise_mph": 28,
+    "fw_seconds": 12
+  },
+  {
+    "name": "calm-38",
+    "cruise_mph": 38,
+    "fw_seconds": 15
+  },
+  {
+    "name": "crosswind-trim",
+    "cruise_mph": 33,
+    "wind_mps": 3,
+    "wind_from_deg": 30,
+    "pitch_nm": 0.35,
+    "roll_nm": 0.08,
+    "yaw_nm": 0.06,
+    "fw_seconds": 12
+  },
+  {
+    "name": "nose-down",
+    "cruise_mph": 33,
+    "pitch_nm": -0.4,
+    "fw_seconds": 12
+  },
+  {
+    "name": "nose-up-strong",
+    "cruise_mph": 33,
+    "pitch_nm": 0.7,
+    "fw_seconds": 8,
+    "settle_rate_dps": 40,
+    "recovery_timeout": 70
+  },
+  {
+    "name": "delayed-mc",
+    "cruise_mph": 33,
+    "delay_mc_ms": 180,
+    "fw_seconds": 8
+  },
+  {
+    "name": "repeated",
+    "cruise_mph": 33,
+    "cycles": 2,
+    "fw_seconds": 8
+  },
+  {
+    "name": "immediate-recovery",
+    "cruise_mph": 33,
+    "immediate_back": true,
+    "fw_seconds": 8
+  },
+  {
+    "name": "slew-02",
+    "back_throttle_slew": 0.2,
+    "cruise_mph": 33,
+    "fw_seconds": 8
+  },
+  {
+    "name": "slew-05",
+    "back_throttle_slew": 0.5,
+    "cruise_mph": 33,
+    "fw_seconds": 8
+  },
+  {
+    "name": "fw-stick-075",
+    "fw_stick": 0.75,
+    "fw_stick_after": 3,
+    "fw_seconds": 3.5
+  },
+  {
+    "name": "abort-back",
+    "abort_back": true,
+    "fw_seconds": 6
+  }
+]

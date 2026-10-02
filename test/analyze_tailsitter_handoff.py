@@ -8,6 +8,65 @@ import numpy as np
 from pyulog import ULog
 
 
+def back_transitions(log, case):
+    """Report the whole back-transition, including the second change of thrust demand."""
+    vtol = log.get_dataset('vtol_vehicle_status').data
+    state = vtol['vehicle_vtol_state']
+    starts = np.flatnonzero((state[1:] == 2) & (state[:-1] != 2)) + 1
+    request = log.get_dataset('tailsitter_handoff').data
+    feedback = log.get_dataset('tailsitter_handoff_status').data
+    thrust = log.get_dataset('vehicle_thrust_setpoint_virtual_mc').data
+    result = []
+    for start in starts:
+        begin = int(vtol['timestamp'][start])
+        ends = np.flatnonzero((vtol['timestamp'] > begin) & (state != 2))
+        end = int(vtol['timestamp'][ends[0]]) if len(ends) else None
+        ids = np.flatnonzero((request['timestamp'] >= begin-20000) & (request['timestamp'] <= begin+20000)
+                            & (request['handoff_id'] != 0) & request.get('to_mc', np.zeros(len(request['timestamp']))))
+        identity = int(request['handoff_id'][ids[0]]) if len(ids) else None
+        releases = np.flatnonzero((request['timestamp'] > begin) & (request['handoff_id'] == 0))
+        normal_release = bool(len(releases) and not request.get('to_mc', np.zeros(len(request['timestamp'])))[releases[0]])
+        item = dict(start_us=begin, end_us=end, matching_requested=identity is not None,
+                    transition_seconds=(end-begin)/1e6 if end else None,
+                    completed=bool(len(ends) and state[ends[0]] == 3), normal_release=normal_release)
+        for name, fields in [('vehicle_thrust_setpoint', ['xyz[2]']),
+                             ('vehicle_torque_setpoint', [f'xyz[{i}]' for i in range(3)]),
+                             ('actuator_motors', [f'control[{i}]' for i in range(4)])]:
+            d = log.get_dataset(name).data
+            values = np.column_stack([d[k] for k in fields])
+            row = {}
+            for label, t in [('start', begin), ('completion', end)]:
+                index = np.searchsorted(d['timestamp'], t) if t else 0
+                row[label+'_step'] = (values[index]-values[index-1]).tolist() if 0 < index < len(values) else None
+                selected = (d['timestamp'] >= (t or 0)-10000) & (d['timestamp'] <= (t or 0)+100000)
+                increments = np.diff(values[selected], axis=0)
+                row[label+'_max_step_100ms'] = float(np.max(np.abs(increments))) if increments.size else None
+            item[name] = row
+        # Check both one-shot acquisitions, stopping each window at its last logged
+        # active sample. Commands after release are deliberately unrestricted.
+        f = (feedback['handoff_id'] == identity) if identity else np.zeros(len(feedback['timestamp']), dtype=bool)
+        active_indices = np.flatnonzero(f & feedback['throttle_slew_active'])
+        segments = np.split(active_indices, np.flatnonzero(np.diff(active_indices) > 1)+1)
+        item['slew_phases'] = []
+        for segment in segments:
+            if not len(segment):
+                continue
+            lo, hi = int(feedback['timestamp'][segment[0]]), int(feedback['timestamp'][segment[-1]])
+            selected = (thrust['timestamp'] >= lo) & (thrust['timestamp'] <= hi)
+            dt = np.clip(np.diff(thrust['timestamp_sample'][selected].astype(float))/1e6, .000125, .02)
+            delta = np.diff(-thrust['xyz[2]'][selected])
+            fall = case.get('back_throttle_slew', 1.)
+            # Older recorded runs used a 2:1 rise/fall ratio. New runs record both rates.
+            rise = case.get('back_throttle_rise', 2*fall)
+            item['slew_phases'].append(dict(start_after_request_s=(lo-begin)/1e6,
+                logged_active_duration_s=(hi-lo)/1e6,
+                fall_bound_passed=bool(np.all(delta >= -fall*dt-1e-5)),
+                rise_bound_passed=bool(np.all(delta <= rise*dt+1e-5))))
+        item['normal_handoff_exercised'] = identity is not None and item['completed'] and normal_release
+        result.append(item)
+    return result
+
+
 def analyze(path):
     log = ULog(str(path))
     def data(name, instance=0):
@@ -22,14 +81,15 @@ def analyze(path):
     for request in sorted(set(map(int, requests['handoff_id'])) - {0}):
         rows = np.flatnonzero(requests['handoff_id'] == request)
         row = rows[0]
+        to_mc = bool(requests.get('to_mc', np.zeros(len(requests['timestamp'])))[row])
         active_rows = rows[requests['active'][rows] != 0]
         active = int(requests['timestamp'][active_rows[0]]) if len(active_rows) else None
-        cancelled = np.flatnonzero((requests['timestamp'] > request) & (requests['handoff_id'] == 0))
+        cancelled = np.flatnonzero((requests['timestamp'] > request) & (requests['handoff_id'] != request))
         cancel = int(requests['timestamp'][cancelled[0]]) if len(cancelled) else int(requests['timestamp'][-1])
         fault = bool(case.get('expected_quadchute') and active is None)
         target = [float(requests[f'torque[{i}]'][row]) for i in range(3)]
         thrust = float(requests['thrust'][row])
-        result = dict(request_us=request, active_us=active,
+        result = dict(request_us=request, active_us=active, direction='FW→MC' if to_mc else 'MC→FW',
                       ready_delay_ms=(active-request)/1000 if active else None,
                       outgoing_torque=target, outgoing_thrust=thrust,
                       learned_bias_mc=[float(requests[f'torque_bias[{i}]'][row]) for i in range(3)])
@@ -89,14 +149,15 @@ def analyze(path):
             # Separately report routed/motor steps above: asynchronous routing can repeat
             # one command then skip to the next, so publication-time slopes are not the
             # controller's integration interval.
-            d = data('vehicle_thrust_setpoint_virtual_fw')
+            d = data('vehicle_thrust_setpoint_virtual_mc' if to_mc else 'vehicle_thrust_setpoint_virtual_fw')
             selected = (d['timestamp'] >= (active or request)) & (d['timestamp'] <= (end or request+5000000))
             times = d['timestamp_sample'][selected].astype(float)
-            values = d['xyz[0]'][selected]
-            dt = np.clip(np.diff(times) / 1e6, .002, .04)
+            values = -d['xyz[2]'][selected] if to_mc else d['xyz[0]'][selected]
+            dt = np.clip(np.diff(times) / 1e6, .000125 if to_mc else .002, .02 if to_mc else .04)
             increments = np.diff(values)
             slope = increments / dt
-            fall, rise = case.get('throttle_slew', .2), 2*case.get('throttle_slew', .2)
+            fall = case.get('back_throttle_slew', 1.) if to_mc else case.get('throttle_slew', .2)
+            rise = case.get('back_throttle_rise', 2*fall) if to_mc else 2*fall
             result['slew_max_fall_per_s'] = float(max(0., -np.min(slope))) if len(slope) else None
             result['slew_max_rise_per_s'] = float(max(0., np.max(slope))) if len(slope) else None
             result['slew_fall_bound_passed'] = bool(len(slope) and np.all(increments >= -fall*dt-1e-5))
@@ -104,7 +165,7 @@ def analyze(path):
             try:
                 tecs = data('tecs_status')
                 ts = (tecs['timestamp'] >= request) & (tecs['timestamp'] <= (end or request+5000000))
-                protected = bool(np.any(tecs['underspeed_ratio'][ts] > 1e-6))
+                protected = not to_mc and bool(np.any(tecs['underspeed_ratio'][ts] > 1e-6))
             except (KeyError, IndexError):
                 pass
             result['underspeed_during_slew'] = protected
@@ -115,7 +176,7 @@ def analyze(path):
             result['slew_passed'] = None
         if fault:
             result['slew_passed'] = None  # No FW controller was accepted.
-        if case.get('mission') and 'speed_change_mph' in case:
+        if not to_mc and case.get('mission') and 'speed_change_mph' in case:
             commands = data('vehicle_command')
             speed_commands = np.flatnonzero(commands['command'] == 178)
             target_speed = case['speed_change_mph']*.44704
@@ -141,7 +202,7 @@ def analyze(path):
                 upstream_target_reset_after_handoff_ms=[(int(source['timestamp'][i])-request)/1000 for i in source_resets],
                 commanded_mps=target_speed, command_after_handoff_ms=(command_time-request)/1000 if command_time else None,
                 max_logged_reference_slew_mps2=float(max(slope)) if len(slope) else None)
-        if 'stick' in case and not case.get('rapid'):
+        if not to_mc and 'stick' in case and not case.get('rapid'):
             d = data('vehicle_thrust_setpoint_virtual_fw')
             selected = (d['timestamp'] >= (active or request)) & (d['timestamp'] <= request+500000)
             dt = np.clip(np.diff(d['timestamp_sample'][selected].astype(float)) / 1e6, .002, .04)
@@ -151,7 +212,7 @@ def analyze(path):
             rate = case.get('throttle_slew', .2)
             result['constant_stick_ramp_passed'] = bool(len(slope) and np.max(slope) <= 2*rate+1e-4 and np.min(slope) >= -rate-1e-4)
             result['continuity_passed'] = passed and result['constant_stick_ramp_passed']
-        if case.get('rapid'):
+        if not to_mc and case.get('rapid'):
             pilot = data('manual_control_setpoint')
             full = np.flatnonzero((pilot['timestamp'] >= request) & (pilot['throttle'] >= .999))
             d = data('vehicle_thrust_setpoint')
@@ -167,7 +228,7 @@ def analyze(path):
         result['max_rate_first_second_dps'] = float(np.rad2deg(np.max(np.abs(
             np.column_stack([angular[f'xyz[{i}]'][select] for i in range(3)]))))) if np.any(select) else None
         results.append(result)
-    return dict(log=str(path), handoffs=results)
+    return dict(log=str(path), handoffs=results, back_transitions=back_transitions(log, case))
 
 
 def main():

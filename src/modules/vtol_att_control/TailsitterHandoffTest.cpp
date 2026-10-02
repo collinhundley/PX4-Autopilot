@@ -37,6 +37,7 @@
 #include "vtol_att_control_main.h"
 #include "../fw_rate_control/FixedwingRateControl.hpp"
 #include "../fw_att_control/FixedwingAttitudeControl.hpp"
+#include "../mc_rate_control/MulticopterRateControl.hpp"
 
 using matrix::Vector3f;
 
@@ -62,6 +63,9 @@ protected:
 		param_reset_all();
 		parameter("VT_TYPE", int32_t(0));
 		parameter("VT_TS_THR_SLEW", .2f);
+		float back_slew = 0.f;
+		ASSERT_EQ(param_get(param_find("VT_TS_B_THR_SLEW"), &back_slew), 0);
+		ASSERT_FLOAT_EQ(back_slew, .5f);
 		parameter("VT_FW_DIFTHR_EN", int32_t(7));
 		parameter("VT_FW_DIFTHR_S_Y", .7f);
 		parameter("VT_FW_DIFTHR_S_P", .8f);
@@ -76,14 +80,19 @@ protected:
 		_tailsitter = std::make_unique<Tailsitter>(_router.get());
 		vehicle_land_detected_s land{};
 		_land.publish(land);
+		control_allocator_status_s allocation{};
+		allocation.timestamp = hrt_absolute_time();
+		allocation.torque_setpoint_achieved = true;
+		_allocation.publish(allocation);
 		mode(true);
 	}
 
-	void mode(bool fw)
+	void mode(bool fw, bool transition = false)
 	{
 		vehicle_status_s status{};
 		status.timestamp = hrt_absolute_time();
 		status.is_vtol = status.is_vtol_tailsitter = true;
+		status.in_transition_mode = transition;
 		status.vehicle_type = fw ? vehicle_status_s::VEHICLE_TYPE_FIXED_WING : vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
 		_vehicle.publish(status);
 		vehicle_control_mode_s control{};
@@ -315,6 +324,234 @@ protected:
 	}
 
 	std::unique_ptr<FixedwingRateControl> _fw;
+	std::unique_ptr<MulticopterRateControl> _mc_controller;
+	uORB::Publication<vehicle_rates_setpoint_s> _mc_rates{ORB_ID(vehicle_rates_setpoint_virtual_mc)};
+	uORB::Subscription _mc_torque{ORB_ID(vehicle_torque_setpoint_virtual_mc)};
+	uORB::Subscription _mc_thrust{ORB_ID(vehicle_thrust_setpoint_virtual_mc)};
+	Vector3f _back_torque{};
+	Vector3f _back_bias{};
+	float _back_thrust{0.f};
+
+	void beginBack(float battery = 1.f, bool limited_integral = false)
+	{
+		begin();
+		demand(.37f);
+		runFw();
+		route();
+		runFw();
+		route();
+		_back_torque = Vector3f(_router->get_torque_setpoint_0()->xyz);
+		_back_thrust = -_router->get_thrust_setpoint_0()->xyz[2];
+		Quatf(matrix::Eulerf(0.f, math::radians(-80.f), 0.f)).copyTo(_tailsitter->_v_att->q);
+		Quatf(matrix::Eulerf(0.f, math::radians(10.f), 0.f)).copyTo(_tailsitter->_fw_virtual_att_sp->q_d);
+		Quatf(_tailsitter->_v_att->q).copyTo(_tailsitter->_v_att_sp->q_d);
+		_tailsitter->startBackHandoff();
+		ASSERT_TRUE(_tailsitter->_handoff.to_mc);
+		ASSERT_NE(_tailsitter->_handoff.handoff_id, 0u);
+		_back_bias = Vector3f(_tailsitter->_handoff.torque_bias);
+		EXPECT_LT((_back_bias - Vector3f(_mc.torque_bias)).norm(), 1e-6f);
+		_tailsitter->_vtol_mode = Tailsitter::vtol_mode::TRANSITION_BACK;
+		_tailsitter->resetTransitionStates();
+		mode(false, true);
+		parameter("MC_BAT_SCALE_EN", int32_t(battery != 1.f));
+
+		if (limited_integral) {
+			for (const char *name : {"MC_RR_INT_LIM", "MC_PR_INT_LIM", "MC_YR_INT_LIM"}) { parameter(name, .02f); }
+		}
+
+		_mc_controller = std::make_unique<MulticopterRateControl>(true);
+		battery_status_s status{};
+		status.connected = true;
+		status.scale = battery;
+		_battery.publish(status);
+		px4_usleep(1);
+	}
+
+	void mcDemand(float collective, bool fresh = true)
+	{
+		vehicle_rates_setpoint_s sp{};
+		sp.timestamp = fresh ? hrt_absolute_time() : _tailsitter->_handoff.handoff_id - 1;
+		sp.roll = -.3f;
+		sp.pitch = .4f;
+		sp.yaw = -.2f;
+		sp.thrust_body[2] = -collective;
+		_mc_rates.publish(sp);
+	}
+
+	void runMc()
+	{
+		vehicle_angular_velocity_s angular{};
+		angular.timestamp = angular.timestamp_sample = hrt_absolute_time();
+		Vector3f(.05f, -.07f, .09f).copyTo(angular.xyz);
+		Vector3f(.2f, -.3f, .4f).copyTo(angular.xyz_derivative);
+		_angular.publish(angular);
+		_mc_controller->_last_run = angular.timestamp_sample - 10000; // 100 Hz sensor step.
+		_mc_controller->Run();
+	}
+
+	void routeBack(bool thrust = true)
+	{
+		_mc_torque.copy(_router->get_vehicle_torque_setpoint_virtual_mc());
+
+		if (thrust) { _mc_thrust.copy(_router->get_vehicle_thrust_setpoint_virtual_mc()); }
+
+		_tailsitter->fill_actuator_outputs();
+	}
+
+	void expectBackHeld()
+	{
+		EXPECT_LT((Vector3f(_router->get_torque_setpoint_0()->xyz) - _back_torque).norm(), 1e-6f);
+		EXPECT_NEAR(_router->get_thrust_setpoint_0()->xyz[2], -_back_thrust, 1e-6f);
+	}
+
+	void checkBackIntegral(float scale, float limit = 1.f)
+	{
+		EXPECT_LT((_mc_controller->_rate_control.getIntegral() - matrix::constrain(_back_bias / scale, -limit, limit)).norm(), 1e-6f);
+	}
+
+	void cancelBack()
+	{
+		_tailsitter->cancelHandoff();
+		runMc();
+		EXPECT_EQ(_mc_controller->_handoff_initialized, 0u);
+		EXPECT_FALSE(_mc_controller->_throttle_slew.active());
+	}
+
+	void finishBack()
+	{
+		mode(false);
+		_tailsitter->_vtol_mode = Tailsitter::vtol_mode::MC_MODE;
+		_tailsitter->_back_transition_end_timestamp = hrt_absolute_time();
+	}
+
+	void delayedBackAttitudeSource()
+	{
+		_tailsitter->_flag_was_in_trans_mode = false;
+		_tailsitter->_mc_virtual_att_sp->timestamp = 0;
+		_tailsitter->_fw_virtual_att_sp->timestamp = hrt_absolute_time();
+		_tailsitter->_last_thr_in_fw_mode = _back_thrust;
+		Quatf(_tailsitter->_fw_virtual_att_sp->q_d).copyTo(_tailsitter->_v_att_sp->q_d);
+		EXPECT_TRUE(_tailsitter->backHandoffSafe());
+		_tailsitter->update_transition_state();
+		EXPECT_TRUE(_tailsitter->_flag_was_in_trans_mode);
+		EXPECT_LT(fabsf(matrix::Eulerf(Quatf(_tailsitter->_v_att_sp->q_d)).theta() - math::radians(-80.f)), .01f);
+		EXPECT_FLOAT_EQ(_tailsitter->_v_att_sp->thrust_body[2], -_back_thrust);
+		EXPECT_TRUE(_tailsitter->backHandoffSafe());
+	}
+
+	void backCompletionWaitsForController()
+	{
+		_tailsitter->_handoff_active_timestamp = hrt_absolute_time() - 600000;
+		finishBack();
+		_tailsitter->update_vtol_state(); // MC rate control has not observed this mode change yet.
+		EXPECT_NE(_tailsitter->_handoff.handoff_id, 0u);
+		mcDemand(.8f);
+		runMc();
+		_tailsitter->update_vtol_state();
+		EXPECT_NE(_tailsitter->_handoff.handoff_id, 0u);
+
+		for (int i = 0; i < 200 && backSlewActive(); ++i) { mcDemand(.8f); runMc(); routeBack(); }
+
+		EXPECT_FALSE(backSlewActive());
+
+		const Vector3f integral = mcIntegral();
+		_tailsitter->_back_transition_end_timestamp = hrt_absolute_time() - 600000;
+		_tailsitter->update_vtol_state();
+		EXPECT_EQ(_tailsitter->_handoff.handoff_id, 0u);
+		EXPECT_FALSE(_tailsitter->_handoff.to_mc);
+		runMc();
+		EXPECT_LT((mcIntegral() - integral).norm(), .01f);
+	}
+
+	void saturatedMcAllocator()
+	{
+		control_allocator_status_s allocation{};
+		allocation.timestamp = hrt_absolute_time();
+		Vector3f(.1f, -.1f, .1f).copyTo(allocation.unallocated_torque);
+		_allocation.publish(allocation);
+		const Vector3f integral = mcIntegral();
+		runMc();
+		EXPECT_EQ(mcIntegral(), integral);
+	}
+
+	void backAttitudeCompletion()
+	{
+		// Actual pitch crossed the completion threshold; the position controller now
+		// asks for a braking attitude on the other side of vertical.
+		Quatf(matrix::Eulerf(0.f, math::radians(-14.f), 0.f)).copyTo(_tailsitter->_v_att->q);
+		_tailsitter->_q_trans_sp = Quatf(matrix::Eulerf(0.f, math::radians(-10.f), 0.f));
+		_tailsitter->_q_trans_sp.copyTo(_tailsitter->_v_att_sp->q_d);
+		Quatf(matrix::Eulerf(0.f, math::radians(17.f), 0.f)).copyTo(_tailsitter->_mc_virtual_att_sp->q_d);
+		_tailsitter->update_vtol_state();
+		_tailsitter->update_mc_state();
+		EXPECT_NEAR(matrix::Eulerf(Quatf(_tailsitter->_v_att_sp->q_d)).theta(), math::radians(-10.f), .001f);
+		_tailsitter->_back_transition_end_timestamp = hrt_absolute_time() - 250000;
+		Quatf(matrix::Eulerf(0.f, math::radians(20.f), 0.f)).copyTo(_tailsitter->_mc_virtual_att_sp->q_d);
+		_tailsitter->update_mc_state();
+		EXPECT_NEAR(matrix::Eulerf(Quatf(_tailsitter->_v_att_sp->q_d)).theta(), math::radians(6.5f), .001f);
+		_tailsitter->_back_transition_end_timestamp = hrt_absolute_time() - 600000;
+		_tailsitter->update_mc_state();
+		EXPECT_NEAR(matrix::Eulerf(Quatf(_tailsitter->_v_att_sp->q_d)).theta(), math::radians(20.f), .001f);
+	}
+
+	void expireBackHandoff()
+	{
+		_tailsitter->_handoff.handoff_id = hrt_absolute_time() - tailsitter_handoff::kOutputTimeout - 1;
+		routeBack();
+		EXPECT_EQ(_tailsitter->_handoff.handoff_id, 0u);
+		EXPECT_TRUE(_tailsitter->_vtol_vehicle_status->fixed_wing_system_failure);
+	}
+
+	void commandedMcBraking()
+	{
+		_tailsitter->_vtol_mode = Tailsitter::vtol_mode::MC_MODE;
+		tailsitter_handoff_s mc_state{};
+		mc_state.rates[1] = math::radians(75.f);
+		_mc_state.publish(mc_state);
+		vehicle_angular_velocity_s angular{};
+		angular.timestamp = hrt_absolute_time();
+		angular.xyz[1] = math::radians(110.f);
+		_angular.publish(angular);
+		EXPECT_TRUE(_tailsitter->backHandoffSafe());
+		angular.xyz[1] = math::radians(200.f);
+		_angular.publish(angular);
+		EXPECT_FALSE(_tailsitter->backHandoffSafe());
+	}
+
+	uint64_t backInitialized() const { return _mc_controller->_handoff_initialized; }
+	Vector3f mcIntegral() const { return _mc_controller->_rate_control.getIntegral(); }
+	bool backSlewActive() const { return _mc_controller->_throttle_slew.active(); }
+
+	void rejectBack(int reason)
+	{
+		beginBack();
+		_tailsitter->cancelHandoff();
+		_tailsitter->_vtol_mode = Tailsitter::vtol_mode::FW_MODE;
+		mode(true);
+
+		if (reason == 0) {
+			vehicle_angular_velocity_s angular{};
+			angular.timestamp = hrt_absolute_time();
+			angular.xyz[1] = math::radians(120.f);
+			_angular.publish(angular);
+
+		} else if (reason == 1) {
+			_tailsitter->_vtol_vehicle_status->fixed_wing_system_failure = true;
+
+		} else if (reason == 2) {
+			control_allocator_status_s allocation{};
+			allocation.timestamp = hrt_absolute_time();
+			_allocation.publish(allocation);
+
+		} else {
+			tailsitter_handoff_s stale{};
+			stale.timestamp_sample = 1;
+			uORB::Publication<tailsitter_handoff_s> {ORB_ID(tailsitter_handoff_fw)}.publish(stale);
+		}
+
+		_tailsitter->startBackHandoff();
+		EXPECT_EQ(_tailsitter->_handoff.handoff_id, 0u);
+	}
 	std::unique_ptr<VtolAttitudeControl> _router;
 	std::unique_ptr<Tailsitter> _tailsitter;
 	tailsitter_handoff_s _mc{};
@@ -322,6 +559,7 @@ protected:
 	uORB::Publication<vehicle_status_s> _vehicle{ORB_ID(vehicle_status)};
 	uORB::Publication<vehicle_control_mode_s> _control{ORB_ID(vehicle_control_mode)};
 	uORB::Publication<vehicle_land_detected_s> _land{ORB_ID(vehicle_land_detected)};
+	uORB::Publication<control_allocator_status_s> _allocation{ORB_ID(control_allocator_status)};
 	uORB::Publication<vehicle_rates_setpoint_s> _rates{ORB_ID(vehicle_rates_setpoint_virtual_fw)};
 	uORB::Publication<vehicle_angular_velocity_s> _angular{ORB_ID(vehicle_angular_velocity)};
 	uORB::Publication<manual_control_setpoint_s> _pilot{ORB_ID(manual_control_setpoint)};
@@ -583,4 +821,179 @@ TEST_F(TailsitterHandoffTest, SurfaceRollFeedforwardDoesNotStepDifferentialYaw)
 	// MC x is FW yaw; its feedforward must account for the independently controlled roll surface.
 	EXPECT_NEAR(_router->get_torque_setpoint_0()->xyz[0], _mc.torque[0], 1e-6f);
 	EXPECT_NEAR(_router->get_torque_setpoint_0()->xyz[1], _mc.torque[1], 1e-6f);
+}
+
+TEST_F(TailsitterHandoffTest, BackWaitsForFreshMcDemandAndBothOutputs)
+{
+	beginBack();
+	mcDemand(.8f, false);
+	runMc();
+	routeBack();
+	EXPECT_EQ(backInitialized(), 0u);
+	expectBackHeld();
+	px4_usleep(60000);
+	routeBack();
+	expectBackHeld();
+	mcDemand(.8f);
+	runMc();
+	routeBack(false);
+	EXPECT_FALSE(active());
+	expectBackHeld();
+	routeBack();
+	EXPECT_TRUE(active());
+	expectBackHeld();
+	checkBackIntegral(1.f);
+	runMc();
+	routeBack();
+	expectBackHeld();
+}
+
+TEST_F(TailsitterHandoffTest, BackBiasAndCollectiveRespectBatteryScalingAndIntegralLimits)
+{
+	beginBack(2.f, true);
+	mcDemand(.1f);
+	runMc();
+	checkBackIntegral(2.f, .02f);
+	routeBack();
+	ASSERT_TRUE(active());
+	expectBackHeld();
+	float trim = 0.f;
+	param_get(param_find("TRIM_PITCH"), &trim);
+	EXPECT_FLOAT_EQ(trim, -.02f);
+}
+
+TEST_F(TailsitterHandoffTest, BackSlewAcquiresDemandThenLeavesHoverResponseUnrestricted)
+{
+	beginBack();
+	mcDemand(.1f);
+	runMc();
+	routeBack();
+	ASSERT_TRUE(active());
+
+	for (int i = 0; i < 80; ++i) {
+		const float previous = _router->get_thrust_setpoint_0()->xyz[2];
+		mcDemand(.1f);
+		runMc();
+		routeBack();
+		EXPECT_LE(fabsf(_router->get_thrust_setpoint_0()->xyz[2] - previous), .01001f);
+	}
+
+	EXPECT_FALSE(backSlewActive());
+	EXPECT_NEAR(_router->get_thrust_setpoint_0()->xyz[2], -.1f, 1e-6f);
+	mcDemand(.9f);
+	runMc();
+	routeBack();
+	EXPECT_NEAR(_router->get_thrust_setpoint_0()->xyz[2], -.9f, 1e-6f);
+}
+
+TEST_F(TailsitterHandoffTest, BackCompletionReacquiresCollectiveWithoutReseedingBias)
+{
+	beginBack();
+	mcDemand(.37f);
+	runMc();
+	routeBack();
+
+	for (int i = 0; i < 80; ++i) { mcDemand(.37f); runMc(); routeBack(); }
+
+	const Vector3f integral = mcIntegral();
+	finishBack();
+	mcDemand(.8f);
+	runMc();
+	routeBack();
+	EXPECT_NEAR(_router->get_thrust_setpoint_0()->xyz[2], -.37f, 1e-6f);
+	EXPECT_LT((mcIntegral() - integral).norm(), .01f);
+	ASSERT_TRUE(backSlewActive());
+	mcDemand(.8f);
+	runMc();
+	routeBack();
+	EXPECT_GT(_router->get_thrust_setpoint_0()->xyz[2], -.391f);
+	EXPECT_LT(_router->get_thrust_setpoint_0()->xyz[2], -.37f);
+}
+
+TEST_F(TailsitterHandoffTest, BackRecoveryCancellationImmediatelyReleasesThrottle)
+{
+	beginBack();
+	mcDemand(.9f);
+	runMc();
+	routeBack();
+	ASSERT_TRUE(active());
+	cancelBack();
+	routeBack();
+	EXPECT_NEAR(_router->get_thrust_setpoint_0()->xyz[2], -.9f, 1e-6f);
+	EXPECT_LT(mcIntegral().norm(), .01f);
+}
+
+TEST_F(TailsitterHandoffTest, BackUpsetBypassesMatching) { rejectBack(0); }
+TEST_F(TailsitterHandoffTest, BackQuadchuteBypassesMatching) { rejectBack(1); }
+TEST_F(TailsitterHandoffTest, BackSaturationBypassesMatching) { rejectBack(2); }
+TEST_F(TailsitterHandoffTest, BackStaleFwStateBypassesMatching) { rejectBack(3); }
+
+TEST_F(TailsitterHandoffTest, BackInitialAttitudeDoesNotWaitForMcPositionControl)
+{
+	beginBack();
+	delayedBackAttitudeSource();
+}
+
+TEST_F(TailsitterHandoffTest, BackNormalCompletionWaitsForMcModeAndRetainsIntegral)
+{
+	beginBack();
+	mcDemand(.37f);
+	runMc();
+	routeBack();
+
+	for (int i = 0; i < 60; ++i) { mcDemand(.37f); runMc(); routeBack(); }
+
+	ASSERT_FALSE(backSlewActive());
+	backCompletionWaitsForController();
+}
+
+TEST_F(TailsitterHandoffTest, BackImportedIntegralRespectsAllocatorAntiWindup)
+{
+	beginBack();
+	mcDemand(.37f);
+	runMc();
+	routeBack();
+	saturatedMcAllocator();
+}
+
+TEST_F(TailsitterHandoffTest, BackAttitudeCompletionRemovesOnlyInitialMismatch)
+{
+	beginBack();
+	mcDemand(.37f);
+	runMc();
+	routeBack();
+	backAttitudeCompletion();
+}
+
+TEST_F(TailsitterHandoffTest, BackMissingControllerTimesOutIntoRecovery)
+{
+	beginBack();
+	expireBackHandoff();
+}
+
+TEST_F(TailsitterHandoffTest, BackRepeatedRequestCannotAcceptPreviousAcknowledgement)
+{
+	beginBack();
+	mcDemand(.37f);
+	runMc();
+	routeBack();
+	ASSERT_TRUE(active());
+	cancelBack();
+	beginBack();
+	mcDemand(.8f, false);
+	runMc();
+	routeBack();
+	EXPECT_FALSE(active());
+	expectBackHeld();
+	mcDemand(.8f);
+	runMc();
+	routeBack();
+	EXPECT_TRUE(active());
+	expectBackHeld();
+}
+
+TEST_F(TailsitterHandoffTest, BackCompletionAllowsCommandedBrakingButRejectsLossOfTracking)
+{
+	beginBack();
+	commandedMcBraking();
 }

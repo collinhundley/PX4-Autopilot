@@ -13,4 +13,4 @@ float32[3] thrust_body	# Normalized thrust command in body NED frame [-1,1]
 
 bool reset_integral # Reset roll/pitch/yaw integrals (navigation logic change)
 
-# TOPICS vehicle_rates_setpoint vehicle_rates_setpoint_virtual_fw
+# TOPICS vehicle_rates_setpoint vehicle_rates_setpoint_virtual_fw vehicle_rates_setpoint_virtual_mc

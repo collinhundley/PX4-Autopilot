@@ -85,6 +85,8 @@ public:
 
 private:
 	friend class AutotuneModuleTest;
+	bool _reset_attitude_reference{false};
+	uORB::Publication<vehicle_rates_setpoint_s> _virtual_rates_pub{ORB_ID(vehicle_rates_setpoint_virtual_mc)};
 
 	void Run() override;
 

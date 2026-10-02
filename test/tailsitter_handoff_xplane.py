@@ -45,6 +45,10 @@ def cli(module, *args):
 
 
 def run_case(case, output):
+    case = dict(case)
+    case.setdefault('back_throttle_slew', .5)
+    # Record the actual firmware relationship, including for later log analysis.
+    case['back_throttle_rise'] = case['back_throttle_slew']
     out = output / case['name']
     out.mkdir()
     (out / 'case.json').write_text(json.dumps(case, indent=2))
@@ -53,6 +57,7 @@ def run_case(case, output):
               'VT_ARSP_BLEND': min(13.4112, case.get('handoff_mph', 33) * .44704 * .9),
               'FW_AIRSPD_TRIM': case.get('cruise_mph', 33) * .44704,
               'VT_TS_THR_SLEW': case.get('throttle_slew', .2),
+              'VT_TS_B_THR_SLEW': case['back_throttle_slew'],
               'FW_THR_SLEW_MAX': case.get('tecs_throttle_slew', 0),
               'FW_PSP_OFF': case.get('pitch_target_deg', 10),
               'MIS_TAKEOFF_ALT': 60}
@@ -91,6 +96,16 @@ def run_case(case, output):
         set_ref(name, [value] * len(read(name)))
         weather[key] = read(name)
     (out / 'weather.json').write_text(json.dumps(weather, indent=2))
+    # Validate simulator timing before arming. A stalled/slow renderer also
+    # delays the X-Plane sensor bridge, making controller comparisons invalid.
+    timing = []
+    for _ in range(5):
+        time.sleep(1)
+        timing.append({name: read(name) for name in (
+            'sim/operation/misc/frame_rate_period', 'sim/time/total_flight_time_sec')})
+    (out / 'simulator-timing.json').write_text(json.dumps(timing, indent=2))
+    assert all(0 < sample['sim/operation/misc/frame_rate_period'] < .025 for sample in timing), 'Simulator timing guard before arming'
+    assert timing[-1]['sim/time/total_flight_time_sec'] - timing[0]['sim/time/total_flight_time_sec'] > 3, 'Simulator clock stalled before arming'
     (out / 'parameters.txt').write_text(cli('param', 'show', '-a'))
     for path in (SITL / 'rootfs').glob('*bson'):
         shutil.copy2(path, out / path.name)
@@ -103,7 +118,8 @@ def run_case(case, output):
     stage, stage_at = 'connect', start
     last_send = last_hb = last_print = 0
     stable = None
-    moments_on = changed = rapid = aborted = fw_att_stopped = interrupted = False
+    moments_on = changed = rapid = aborted = back_aborted = fw_att_stopped = mc_att_stopped = interrupted = False
+    fw_stick_applied = False
     fw_count = cycle = 0
     throttle = .5
     recovery_alt = 60.
@@ -112,9 +128,9 @@ def run_case(case, output):
         item = dict(t=time.monotonic()-start, case=case['name'], stage=stage, event=message, **extra)
         events.append(item)
         print(json.dumps(item), flush=True)
-    def transition(state):
-        link.mav.command_long_send(1, 1, mavutil.mavlink.MAV_CMD_DO_VTOL_TRANSITION, 0, state, 0, 0, 0, 0, 0, 0)
-        event('transition', state=state)
+    def transition(state, immediate=False):
+        link.mav.command_long_send(1, 1, mavutil.mavlink.MAV_CMD_DO_VTOL_TRANSITION, 0, state, int(immediate), 0, 0, 0, 0, 0)
+        event('transition', state=state, immediate=immediate)
     def upload_mission():
         dataman = SITL / 'rootfs/dataman'
         if dataman.exists():
@@ -237,7 +253,7 @@ def run_case(case, output):
                             fw_att_stopped = True
                             event('FW attitude publications stopped')
                         stage, stage_at, stable = 'mode', now, None
-                    elif now-stage_at > (105 if stage == 'climb' else 45):
+                    elif now-stage_at > (105 if stage == 'climb' else case.get('recovery_timeout', 45)):
                         raise RuntimeError('Hover did not settle')
                 elif stage == 'mode':
                     if now-stage_at > .5:
@@ -282,20 +298,43 @@ def run_case(case, output):
                         throttle = 1.
                         rapid = True
                         event('rapid full-throttle request')
+                    if 'fw_stick' in case and not fw_stick_applied and now-stage_at > case.get('fw_stick_after', 3):
+                        throttle = case['fw_stick']
+                        cli('commander', 'mode', 'stabilized')
+                        fw_stick_applied = True
+                        event('FW manual throttle request', throttle=throttle)
                     if now-stage_at > case.get('fw_seconds', 12):
-                        transition(3)
+                        if case.get('delay_mc_ms'):
+                            cli('mc_att_control', 'stop')
+                            mc_att_stopped = True
+                            event('MC attitude publications stopped')
+                        transition(3, case.get('immediate_back', False))
                         throttle = .5
                         recovery_alt = alt
                         cli('commander', 'mode', 'auto:loiter')
                         cycle += 1
                         stage, stage_at = 'back', now
                 elif stage == 'back':
+                    if mc_att_stopped and now-stage_at > case['delay_mc_ms']/1000:
+                        cli('mc_att_control', 'start', 'vtol')
+                        mc_att_stopped = False
+                        event('MC attitude publications resumed')
+                    if case.get('abort_back') and not back_aborted and now-stage_at > .8 and vtol == 2:
+                        transition(4)
+                        back_aborted = True
+                        event('back-transition aborted into FW')
+                        cli('commander', 'mode', 'altctl')
+                        stage, stage_at = 'front', now
+                        continue
                     if vtol == 3:
                         stage, stage_at, stable = 'recover', now, None
                     elif now-stage_at > 12:
                         raise RuntimeError('Back transition timeout')
                 if now-last_print > 10:
-                    event('state', alt=round(alt, 2), cas=latest.get('VFR_HUD', {}).get('airspeed'), rate=round(rate, 2))
+                    frame_period = read('sim/operation/misc/frame_rate_period')
+                    event('state', alt=round(alt, 2), cas=latest.get('VFR_HUD', {}).get('airspeed'), rate=round(rate, 2), frame_period=frame_period)
+                    if not 0 < frame_period < .04:
+                        raise RuntimeError('Simulator timing guard during flight')
                     last_print = now
                     stream.flush()
     except (Exception, KeyboardInterrupt) as error:
@@ -310,6 +349,8 @@ def run_case(case, output):
             disarmed = 'Disarmed' in cli('commander', 'status')
             if fw_att_stopped:
                 cli('fw_att_control', 'start', 'vtol')
+            if mc_att_stopped:
+                cli('mc_att_control', 'start', 'vtol')
         finally:
             try:
                 if 'dragonfly/handoff_test/seconds_remaining' in refs:
@@ -360,6 +401,8 @@ def main():
             raise
         results.append(dict(name=case['name'], passed=result['passed'], reason=result['reason'], fw_entries=result['fw_entries']))
         (args.output / 'summary.json').write_text(json.dumps(results, indent=2))
+        if not result['passed'] and (not result['fw_entries'] or 'Simulator timing guard' in result['reason']):
+            raise RuntimeError('Batch stopped after failure before handoff or invalid simulator timing: '+result['reason'])
     return 0
 
 

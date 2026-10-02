@@ -41,6 +41,7 @@
 
 #include "tailsitter.h"
 #include <lib/rate_control/tailsitter_handoff.hpp>
+#include <uORB/topics/tailsitter_handoff_status.h>
 #include "vtol_att_control_main.h"
 
 using namespace matrix;
@@ -100,17 +101,22 @@ bool Tailsitter::isRollExceeded()
 	return false;
 }
 
-void Tailsitter::startHandoff()
+void Tailsitter::startHandoff(bool to_mc)
 {
 	_handoff = {};
 	_handoff_active_timestamp = 0;
 	_handoff_motor_residual.zero();
-	_handoff_mc_sub.copy(&_handoff);
+
+	if (to_mc) { _handoff_fw_sub.copy(&_handoff); }
+
+	else { _handoff_mc_sub.copy(&_handoff); }
+
 	// Snapshot the command actually routed to the motors, not an unused/new MC sample.
 	Vector3f(_torque_setpoint_0->xyz).copyTo(_handoff.torque);
 	_handoff.thrust = -_thrust_setpoint_0->xyz[2];
 	_handoff.timestamp = hrt_absolute_time();
-	_handoff.handoff_id = _trans_finished_ts;
+	_handoff.handoff_id = to_mc ? _mc_takeover_timestamp : _trans_finished_ts;
+	_handoff.to_mc = to_mc;
 	_handoff.active = false;
 	_handoff.differential_thrust_scale[0] = (_param_vt_fw_difthr_en.get() & static_cast<int32_t>(VtFwDifthrEnBits::YAW_BIT)) ?
 						_param_vt_fw_difthr_s_y.get() : 0.f;
@@ -118,7 +124,76 @@ void Tailsitter::startHandoff()
 						_param_vt_fw_difthr_s_p.get() : 0.f;
 	_handoff.differential_thrust_scale[2] = (_param_vt_fw_difthr_en.get() & static_cast<int32_t>(VtFwDifthrEnBits::ROLL_BIT)) ?
 						_param_vt_fw_difthr_s_r.get() : 0.f;
+
+	if (to_mc) {
+		matrix::constrain(Vector3f(_handoff.torque_bias).emult(Vector3f(_handoff.differential_thrust_scale)), -1.f, 1.f)
+		.copyTo(_handoff.torque_bias);
+	}
+
 	_handoff_pub.publish(_handoff);
+}
+
+void Tailsitter::cancelHandoff()
+{
+	const bool to_mc = _handoff.to_mc;
+	_handoff = {};
+	_handoff.to_mc = to_mc;
+	_handoff.timestamp = hrt_absolute_time();
+	_handoff_pub.publish(_handoff);
+}
+
+bool Tailsitter::backHandoffSafe()
+{
+	// A pilot's ordinary mode switch can also be an upset bailout. Do not delay recovery.
+	vehicle_angular_velocity_s angular{};
+	_angular_velocity_sub.copy(&angular);
+	const Quatf attitude(_v_att->q);
+	const Quatf target = (_vtol_mode == vtol_mode::FW_MODE
+			      || (_vtol_mode == vtol_mode::TRANSITION_BACK && !_flag_was_in_trans_mode))
+			     ? Quatf(_fw_virtual_att_sp->q_d) * _q_fw_to_mc.inversed() : Quatf(_v_att_sp->q_d);
+	Vector3f rate_error(angular.xyz);
+
+	if (_vtol_mode == vtol_mode::MC_MODE) {
+		// Ordinary MC braking can deliberately command high pitch rates. After the
+		// transition, judge loss of tracking rather than that commanded manoeuvre.
+		tailsitter_handoff_s mc_state{};
+		_handoff_mc_sub.copy(&mc_state);
+		rate_error -= Vector3f(mc_state.rates);
+	}
+
+	const float attitude_error = 2.f * acosf(math::constrain(fabsf((attitude.inversed() * target)(0)), 0.f, 1.f));
+	return _v_control_mode->flag_armed && _v_control_mode->flag_control_rates_enabled
+	       && _v_control_mode->flag_control_attitude_enabled && !_land_detected->landed
+	       && !_vtol_vehicle_status->fixed_wing_system_failure && !_attc->get_immediate_transition()
+	       && angular.timestamp != 0 && hrt_elapsed_time(&angular.timestamp) < tailsitter_handoff::kOutputMaxAge
+	       && rate_error.isAllFinite() && rate_error.norm() < math::radians(90.f)
+	       && attitude.isAllFinite() && target.isAllFinite()
+	       && fabsf(attitude.norm() - 1.f) < .01f && fabsf(target.norm() - 1.f) < .01f
+	       && fabsf(attitude_error) < math::radians(45.f);
+}
+
+void Tailsitter::startBackHandoff()
+{
+	tailsitter_handoff_s source{};
+	_handoff_fw_sub.copy(&source);
+	control_allocator_status_s allocation{};
+	_allocator_sub.copy(&allocation);
+	const bool saturated = hrt_elapsed_time(&allocation.timestamp) < tailsitter_handoff::kOutputMaxAge
+			       && !allocation.torque_setpoint_achieved;
+	_mc_takeover_timestamp = hrt_absolute_time();
+
+	if (!backHandoffSafe() || saturated || source.timestamp_sample == 0
+	    || hrt_elapsed_time(&source.timestamp_sample) >= tailsitter_handoff::kOutputMaxAge
+	    || source.timestamp_setpoint == 0 || hrt_elapsed_time(&source.timestamp_setpoint) >= tailsitter_handoff::kOutputMaxAge
+	    || !Vector3f(source.torque_bias).isAllFinite() || !Vector3f(source.rates).isAllFinite()
+	    || !Vector3f(_torque_setpoint_0->xyz).isAllFinite() || !PX4_ISFINITE(_thrust_setpoint_0->xyz[2])) {
+		cancelHandoff();
+		return;
+	}
+
+	// Reuse the motor-space snapshot and differential-thrust scales of the forward handoff.
+	_back_transition_end_timestamp = 0;
+	startHandoff(true);
 }
 
 void Tailsitter::update_vtol_state()
@@ -135,6 +210,7 @@ void Tailsitter::update_vtol_state()
 		// Failsafe event, switch to MC mode immediately
 		if (_vtol_mode != vtol_mode::MC_MODE) {
 			_transition_start_timestamp = hrt_absolute_time();
+			_mc_takeover_timestamp = _transition_start_timestamp;
 		}
 
 		_vtol_mode = vtol_mode::MC_MODE;
@@ -146,6 +222,7 @@ void Tailsitter::update_vtol_state()
 			break;
 
 		case vtol_mode::FW_MODE:
+			startBackHandoff();
 			resetTransitionStates();
 			_vtol_mode = vtol_mode::TRANSITION_BACK;
 			break;
@@ -199,10 +276,35 @@ void Tailsitter::update_vtol_state()
 	if (_vtol_mode == vtol_mode::FW_MODE && previous_mode != vtol_mode::FW_MODE) {
 		startHandoff();
 
-	} else if (_vtol_mode != vtol_mode::FW_MODE && _handoff.handoff_id != 0) {
-		_handoff = {};
-		_handoff.timestamp = hrt_absolute_time();
-		_handoff_pub.publish(_handoff);
+	} else if (_handoff.handoff_id != 0
+		   && ((_handoff.to_mc && (_vtol_mode == vtol_mode::TRANSITION_FRONT_P1
+					   || (previous_mode != vtol_mode::FW_MODE && !backHandoffSafe())))
+		       || (!_handoff.to_mc && _vtol_mode != vtol_mode::FW_MODE))) {
+		cancelHandoff();
+	}
+
+	if (previous_mode == vtol_mode::TRANSITION_BACK && _vtol_mode == vtol_mode::MC_MODE) {
+		_back_transition_end_timestamp = hrt_absolute_time();
+		_back_attitude_offset.zero();
+		const Quatf mc_target(_mc_virtual_att_sp->q_d);
+
+		if (_handoff.to_mc && _handoff.active && mc_target.isAllFinite() && fabsf(mc_target.norm() - 1.f) < .01f) {
+			Quatf offset = _q_trans_sp * mc_target.inversed();
+			offset.canonicalize();
+			_back_attitude_offset = AxisAnglef(offset);
+		}
+	}
+
+	if (_handoff.to_mc && _handoff.active && _vtol_mode == vtol_mode::MC_MODE
+	    && hrt_elapsed_time(&_back_transition_end_timestamp) > tailsitter_handoff::kTorqueBlendTime * 1e6f) {
+		tailsitter_handoff_status_s status{};
+		_handoff_status_sub.copy(&status);
+
+		if (status.handoff_id == _handoff.handoff_id && status.timestamp > _back_transition_end_timestamp
+		    && !status.in_transition && !status.throttle_slew_active) {
+			_handoff.to_mc = false; // Completed normally: retain the adapted MC integral.
+			cancelHandoff();
+		}
 	}
 
 	// map tailsitter specific control phases to simple control modes
@@ -233,8 +335,11 @@ void Tailsitter::update_transition_state()
 
 	const hrt_abstime now = hrt_absolute_time();
 
-	// we need the incoming (virtual) mc attitude setpoints to be recent, otherwise return (means the previous setpoint stays active)
-	if (_mc_virtual_att_sp->timestamp < (now - 1_s)) {
+	// Back-transition must immediately publish an MC-frame attitude target, even while
+	// the MC position controller is waking up. Retain FW collective until its demand arrives.
+	const bool mc_setpoint_recent = _mc_virtual_att_sp->timestamp >= (now - 1_s);
+
+	if (!mc_setpoint_recent && _vtol_mode != vtol_mode::TRANSITION_BACK) {
 		return;
 	}
 
@@ -305,12 +410,7 @@ void Tailsitter::update_transition_state()
 		}
 	}
 
-	_v_att_sp->thrust_body[2] = _mc_virtual_att_sp->thrust_body[2];
-
-	if (_vtol_mode == vtol_mode::TRANSITION_BACK) {
-		const float progress = math::constrain(_time_since_trans_start / B_TRANS_THRUST_BLENDING_DURATION, 0.f, 1.f);
-		blendThrottleBeginningBackTransition(progress);
-	}
+	_v_att_sp->thrust_body[2] = mc_setpoint_recent ? _mc_virtual_att_sp->thrust_body[2] : -_last_thr_in_fw_mode;
 
 	_v_att_sp->timestamp = hrt_absolute_time();
 
@@ -322,6 +422,19 @@ void Tailsitter::waiting_on_tecs()
 {
 	// copy the last trust value from the front transition
 	_v_att_sp->thrust_body[0] = -_last_thr_in_mc;
+}
+
+void Tailsitter::update_mc_state()
+{
+	VtolType::update_mc_state();
+
+	if (_handoff.to_mc && _handoff.active) {
+		// Remove only the initial attitude mismatch when the transition trajectory ends.
+		// Live MC target changes and attitude feedback remain active throughout.
+		const float remaining = tailsitter_handoff::remaining(hrt_elapsed_time(&_back_transition_end_timestamp) * 1e-6f);
+		const Quatf correction(AxisAnglef(_back_attitude_offset * remaining));
+		(correction * Quatf(_v_att_sp->q_d)).copyTo(_v_att_sp->q_d);
+	}
 }
 
 void Tailsitter::update_fw_state()
@@ -430,15 +543,47 @@ void Tailsitter::fill_actuator_outputs()
 	} else {
 		_thrust_setpoint_0->xyz[2] = _vehicle_thrust_setpoint_virtual_mc->xyz[2];
 
-		// for the short period after starting the backtransition where there is no thrust published yet from the MC controller,
-		// keep publishing the last FW thrust to keep the motors running
-		if (_vtol_mode != vtol_mode::TRANSITION_FRONT_P1 && hrt_elapsed_time(&_transition_start_timestamp) < 50_ms) {
+		tailsitter_handoff_s mc_state{};
+		_handoff_mc_sub.copy(&mc_state);
+		const bool fresh_mc = mc_state.timestamp_setpoint > _mc_takeover_timestamp
+				      && _vehicle_thrust_setpoint_virtual_mc->timestamp_sample >= mc_state.timestamp_sample
+				      && PX4_ISFINITE(_vehicle_thrust_setpoint_virtual_mc->xyz[2]);
+
+		// Recovery bypasses matching and slew. Retain only the pre-existing bounded protection
+		// against missing MC publications, releasing it as soon as the recovery output arrives.
+		if (_vtol_mode != vtol_mode::TRANSITION_FRONT_P1 && !(_handoff.to_mc && _handoff.handoff_id != 0)
+		    && !fresh_mc && hrt_elapsed_time(&_transition_start_timestamp) < 50_ms) {
 			_thrust_setpoint_0->xyz[2] = -_last_thr_in_fw_mode;
 		}
 
 		_torque_setpoint_0->xyz[0] = _vehicle_torque_setpoint_virtual_mc->xyz[0];
 		_torque_setpoint_0->xyz[1] = _vehicle_torque_setpoint_virtual_mc->xyz[1];
 		_torque_setpoint_0->xyz[2] = _vehicle_torque_setpoint_virtual_mc->xyz[2];
+
+		if (_handoff.to_mc && _handoff.handoff_id != 0 && !_handoff.active) {
+			tailsitter_handoff_s ack{};
+			_handoff_ack_sub.copy(&ack);
+			const bool ready = ack.to_mc && tailsitter_handoff::ready(_handoff.handoff_id, ack.handoff_id,
+					   ack.timestamp_sample, _vehicle_torque_setpoint_virtual_mc->timestamp_sample,
+					   _vehicle_thrust_setpoint_virtual_mc->timestamp_sample)
+					   && Vector3f(_vehicle_torque_setpoint_virtual_mc->xyz).isAllFinite()
+					   && PX4_ISFINITE(_vehicle_thrust_setpoint_virtual_mc->xyz[2])
+					   && hrt_elapsed_time(&_vehicle_torque_setpoint_virtual_mc->timestamp) < tailsitter_handoff::kOutputMaxAge
+					   && hrt_elapsed_time(&_vehicle_thrust_setpoint_virtual_mc->timestamp) < tailsitter_handoff::kOutputMaxAge;
+			Vector3f(_handoff.torque).copyTo(_torque_setpoint_0->xyz);
+			_thrust_setpoint_0->xyz[2] = -_handoff.thrust;
+
+			if (ready) {
+				_handoff.active = true;
+				_handoff_active_timestamp = hrt_absolute_time();
+				_handoff.timestamp = hrt_absolute_time();
+				_handoff_pub.publish(_handoff);
+
+			} else if (hrt_elapsed_time(&_handoff.handoff_id) > tailsitter_handoff::kOutputTimeout) {
+				cancelHandoff();
+				_attc->quadchute(QuadchuteReason::TransitionTimeout);
+			}
+		}
 	}
 
 	// Control surfaces
@@ -473,9 +618,4 @@ void Tailsitter::blendThrottleAfterFrontTransition(float scale)
 {
 	// note: MC throttle is negative (as in negative z), while FW throttle is positive (positive x)
 	_v_att_sp->thrust_body[0] = scale * _v_att_sp->thrust_body[0] + (1.f - scale) * (-_last_thr_in_mc);
-}
-
-void Tailsitter::blendThrottleBeginningBackTransition(float scale)
-{
-	_v_att_sp->thrust_body[2] = scale * _v_att_sp->thrust_body[2] + (1.f - scale) * (-_last_thr_in_fw_mode);
 }

@@ -149,6 +149,30 @@ MulticopterRateControl::Run()
 		}
 
 		_vehicle_status_sub.update(&_vehicle_status);
+		_handoff_sub.update(&_handoff);
+
+		if (_param_mc_bat_scale_en.get() && _battery_status_sub.updated()) {
+			battery_status_s battery_status{};
+
+			if (_battery_status_sub.copy(&battery_status) && battery_status.connected && battery_status.scale > 0.f) {
+				_battery_status_scale = battery_status.scale;
+			}
+		}
+
+		const float battery_scale = _param_mc_bat_scale_en.get() && _battery_status_scale > 0.f ? _battery_status_scale : 1.f;
+		const bool back_handoff = _vehicle_status.is_vtol_tailsitter && _handoff.to_mc && _handoff.handoff_id != 0
+					  && _vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING
+					  && _vehicle_control_mode.flag_control_rates_enabled && _vehicle_control_mode.flag_armed && !_landed;
+
+		if (!back_handoff || _handoff_initialized != _handoff.handoff_id) {
+			if (_handoff_initialized != 0 && _handoff.to_mc && _handoff.handoff_id == 0) {
+				_rate_control.resetIntegral(); // Recovery cancelled the imported FW bias.
+			}
+
+			_handoff_initialized = 0;
+			_throttle_slew.cancel();
+			_output_saturation.zero();
+		}
 
 		// use rates setpoint topic
 		vehicle_rates_setpoint_s vehicle_rates_setpoint{};
@@ -174,11 +198,14 @@ MulticopterRateControl::Run()
 				vehicle_rates_setpoint.yaw = _rates_setpoint(2);
 				_thrust_setpoint.copyTo(vehicle_rates_setpoint.thrust_body);
 				vehicle_rates_setpoint.timestamp = hrt_absolute_time();
+				_rates_setpoint_timestamp = vehicle_rates_setpoint.timestamp;
 
 				_vehicle_rates_setpoint_pub.publish(vehicle_rates_setpoint);
 			}
 
-		} else if (_vehicle_rates_setpoint_sub.update(&vehicle_rates_setpoint)) {
+		} else if ((_vehicle_status.is_vtol_tailsitter && _vehicle_control_mode.flag_control_attitude_enabled
+			    ? _virtual_rates_sub.update(&vehicle_rates_setpoint) : _vehicle_rates_setpoint_sub.update(&vehicle_rates_setpoint))) {
+			_rates_setpoint_timestamp = vehicle_rates_setpoint.timestamp;
 			_rates_setpoint(0) = PX4_ISFINITE(vehicle_rates_setpoint.roll)  ? vehicle_rates_setpoint.roll  : rates(0);
 			_rates_setpoint(1) = PX4_ISFINITE(vehicle_rates_setpoint.pitch) ? vehicle_rates_setpoint.pitch : rates(1);
 			_rates_setpoint(2) = PX4_ISFINITE(vehicle_rates_setpoint.yaw)   ? vehicle_rates_setpoint.yaw   : rates(2);
@@ -197,29 +224,43 @@ MulticopterRateControl::Run()
 			control_allocator_status_s control_allocator_status;
 
 			if (_control_allocator_status_sub.update(&control_allocator_status)) {
-				Vector<bool, 3> saturation_positive;
-				Vector<bool, 3> saturation_negative;
-
-				if (!control_allocator_status.torque_setpoint_achieved) {
-					for (size_t i = 0; i < 3; i++) {
-						if (control_allocator_status.unallocated_torque[i] > FLT_EPSILON) {
-							saturation_positive(i) = true;
-
-						} else if (control_allocator_status.unallocated_torque[i] < -FLT_EPSILON) {
-							saturation_negative(i) = true;
-						}
-					}
-				}
-
-				// TODO: send the unallocated value directly for better anti-windup
-				_rate_control.setSaturationStatus(saturation_positive, saturation_negative);
+				_allocator_saturation = control_allocator_status.torque_setpoint_achieved ? Vector3f{} :
+							Vector3f(control_allocator_status.unallocated_torque);
 			}
+
+			for (int i = 0; i < 3; ++i) {
+				_rate_control.setPositiveSaturationFlag(i, _allocator_saturation(i) > FLT_EPSILON || _output_saturation(i) > FLT_EPSILON);
+				_rate_control.setNegativeSaturationFlag(i, _allocator_saturation(i) < -FLT_EPSILON || _output_saturation(i) < -FLT_EPSILON);
+			}
+
+			const bool initialize_handoff = back_handoff && _handoff_initialized == 0
+							&& now > _handoff.handoff_id && _rates_setpoint_timestamp > _handoff.handoff_id && _thrust_setpoint.isAllFinite()
+							&& _rates_setpoint.isAllFinite() && Vector3f(_handoff.torque_bias).isAllFinite()
+							&& Vector3f(_handoff.torque).isAllFinite() && Vector3f(_handoff.rates).isAllFinite()
+							&& PX4_ISFINITE(_handoff.thrust);
+
+			if (initialize_handoff) {
+				_rate_control.setIntegral(Vector3f(_handoff.torque_bias) / battery_scale);
+				_handoff_rate_offset = Vector3f(_handoff.rates) - _rates_setpoint;
+				_handoff_initialized = _handoff.handoff_id;
+				_handoff_elapsed = 0.f;
+				_mc_reentry_timestamp = 0;
+				_was_back_transition = _vehicle_status.in_transition_mode;
+				param_get(param_find("VT_TS_B_THR_SLEW"), &_handoff_slew_rate);
+				_throttle_slew.reset(_handoff.thrust, _handoff_slew_rate, tailsitter_handoff::kBackThrottleRiseScale);
+			}
+
+			const bool matching = back_handoff && _handoff_initialized == _handoff.handoff_id;
+			const float remaining = matching ? tailsitter_handoff::remaining(_handoff_elapsed) : 0.f;
 
 			const Vector3f outgoing_integral = _rate_control.getIntegral();
 
 			// run rate controller
 			Vector3f torque_setpoint =
-				_rate_control.update(rates, _rates_setpoint, angular_accel, dt, _maybe_landed || _landed);
+				_rate_control.update(rates, _rates_setpoint + remaining * _handoff_rate_offset, angular_accel, dt,
+						     _maybe_landed || _landed || (matching && !_handoff.active));
+
+			if (initialize_handoff) { _output_lpf_yaw.reset(torque_setpoint(2)); }
 
 			// apply low-pass filtering on yaw axis to reduce high frequency torque caused by rotor acceleration
 			torque_setpoint(2) = _output_lpf_yaw.update(torque_setpoint(2), dt);
@@ -241,14 +282,6 @@ MulticopterRateControl::Run()
 
 			// scale setpoints by battery status if enabled
 			if (_param_mc_bat_scale_en.get()) {
-				if (_battery_status_sub.updated()) {
-					battery_status_s battery_status;
-
-					if (_battery_status_sub.copy(&battery_status) && battery_status.connected && battery_status.scale > 0.f) {
-						_battery_status_scale = battery_status.scale;
-					}
-				}
-
 				if (_battery_status_scale > 0.f) {
 					for (int i = 0; i < 3; i++) {
 						vehicle_thrust_setpoint.xyz[i] = math::constrain(vehicle_thrust_setpoint.xyz[i] * _battery_status_scale, -1.f, 1.f);
@@ -257,11 +290,59 @@ MulticopterRateControl::Run()
 				}
 			}
 
+			if (matching) {
+				const Vector3f raw_torque(vehicle_torque_setpoint.xyz);
+
+				if (_handoff_elapsed <= FLT_EPSILON) {
+					_handoff_torque_offset = Vector3f(_handoff.torque) - raw_torque;
+				}
+
+				const Vector3f matched_torque = raw_torque + remaining * _handoff_torque_offset;
+				const Vector3f limited_torque = matrix::constrain(matched_torque, -1.f, 1.f);
+				_output_saturation = matched_torque - limited_torque;
+				limited_torque.copyTo(vehicle_torque_setpoint.xyz);
+
+				// Completion changes flight tasks, not rate controllers. Match collective once more
+				// while acquiring the first ordinary MC target; do not reseed the integral.
+				if (_was_back_transition && !_vehicle_status.in_transition_mode) {
+					_throttle_slew.reset(_handoff_thrust, _handoff_slew_rate, tailsitter_handoff::kBackThrottleRiseScale);
+					_mc_reentry_timestamp = hrt_absolute_time();
+				}
+
+				_was_back_transition = _vehicle_status.in_transition_mode;
+				const float demand = -vehicle_thrust_setpoint.xyz[2];
+				const bool acquired = _handoff.active && _handoff_elapsed > FLT_EPSILON
+						      && _rates_setpoint_timestamp > _mc_reentry_timestamp;
+				_handoff_thrust = _throttle_slew.update(demand, acquired ? dt : 0.f, _rates_setpoint_timestamp);
+				vehicle_thrust_setpoint.xyz[2] = -_handoff_thrust;
+				tailsitter_handoff_status_s feedback{};
+				feedback.timestamp = hrt_absolute_time();
+				feedback.handoff_id = _handoff.handoff_id;
+				feedback.throttle_slew_active = _throttle_slew.active();
+				feedback.in_transition = _vehicle_status.in_transition_mode;
+				feedback.thrust = _handoff_thrust;
+				feedback.demand = demand;
+				feedback.battery_scale = battery_scale;
+				_handoff_status_pub.publish(feedback);
+
+				if (initialize_handoff) {
+					tailsitter_handoff_s ack{};
+					ack.timestamp = hrt_absolute_time();
+					ack.timestamp_sample = now;
+					ack.handoff_id = _handoff.handoff_id;
+					ack.to_mc = true;
+					_handoff_ack_pub.publish(ack);
+				}
+
+				if (_handoff.active) { _handoff_elapsed += dt; }
+			}
+
 			if (_vehicle_status.is_vtol_tailsitter
 			    && _vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING) {
 				tailsitter_handoff_s state{};
 				state.timestamp = hrt_absolute_time();
 				state.timestamp_sample = angular_velocity.timestamp_sample;
+				state.timestamp_setpoint = _rates_setpoint_timestamp;
 				Vector3f(vehicle_torque_setpoint.xyz).copyTo(state.torque);
 				const float scale = _param_mc_bat_scale_en.get() && _battery_status_scale > 0.f ? _battery_status_scale : 1.f;
 				matrix::constrain(outgoing_integral * scale, -1.f, 1.f).copyTo(state.torque_bias);

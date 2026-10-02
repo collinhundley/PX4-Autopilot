@@ -415,6 +415,7 @@ VtolAttitudeControl::Run()
 
 		// update the vtol state machine which decides which mode we are in
 		_vtol_type->update_vtol_state();
+		const bool vtol_mode_changed = current_vtol_mode != _vtol_type->get_mode();
 
 		// check in which mode we are in and call mode specific functions
 		switch (_vtol_type->get_mode()) {
@@ -433,7 +434,7 @@ VtolAttitudeControl::Run()
 			// vehicle is doing a transition to MC
 			_vtol_vehicle_status.vehicle_vtol_state = vtol_vehicle_status_s::VEHICLE_VTOL_STATE_TRANSITION_TO_MC;
 
-			if (mc_att_sp_updated || fw_att_sp_updated) {
+			if (mc_att_sp_updated || fw_att_sp_updated || (_vehicle_status.is_vtol_tailsitter && vtol_mode_changed)) {
 				_vtol_type->update_transition_state();
 				_vehicle_attitude_sp_pub.publish(_vehicle_attitude_sp);
 			}

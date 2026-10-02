@@ -140,6 +140,22 @@ TEST(TailsitterHandoff, LiveDemandChangesAndRepeatedSourceSamplesDoNotEndSlewEar
 	EXPECT_TRUE(slew.active());
 }
 
+TEST(TailsitterHandoff, BackSymmetricSlewAcquiresChangingDemand)
+{
+	ThrottleSlew slew;
+	slew.reset(.09f, .5f, kBackThrottleRiseScale);
+	EXPECT_FLOAT_EQ(slew.update(.32f, 0.f, 1), .09f);
+	EXPECT_NEAR(slew.update(.32f, .1f, 100001), .14f, 1e-6f);
+	EXPECT_NEAR(slew.update(.32f, .1f, 200001), .19f, 1e-6f);
+	EXPECT_NEAR(slew.update(.08f, .1f, 300001), .14f, 1e-6f);
+	EXPECT_TRUE(slew.active());
+	EXPECT_NEAR(slew.update(.08f, .1f, 400001), .09f, 1e-6f);
+	EXPECT_TRUE(slew.active());
+	EXPECT_NEAR(slew.update(.08f, .1f, 500001), .08f, 1e-6f);
+	EXPECT_FALSE(slew.active());
+	EXPECT_FLOAT_EQ(slew.update(.9f, .01f, 510001), .9f);
+}
+
 TEST(TailsitterHandoff, DelayedPublicationsAndOldAcknowledgementsNeverBecomeReady)
 {
 	EXPECT_FALSE(ready(0, 0, 0, 0, 0));

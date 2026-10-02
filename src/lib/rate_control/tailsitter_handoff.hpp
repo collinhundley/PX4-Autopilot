@@ -43,8 +43,10 @@ inline matrix::Vector3f toFW(const matrix::Vector3f &v) { return {-v(2), v(1), v
 inline matrix::Vector3f toMC(const matrix::Vector3f &v) { return {v(2), v(1), -v(0)}; }
 
 // Remove only the initial mismatch, leaving subsequent feedback and pilot input unfiltered.
-// 0.5 s gives the attitude/rate loops time to acquire the FW target without adding feedback lag.
+// 0.5 s gives the attitude/rate loops time to acquire the new target without adding feedback lag.
 static constexpr float kTorqueBlendTime = 0.5f;
+// Normal back-transition uses the same configured rate for increases and reductions.
+static constexpr float kBackThrottleRiseScale = 1.f;
 // Allows several normal publication intervals and scheduler jitter without accepting stale output.
 static constexpr uint64_t kOutputMaxAge = 100000; // 100 ms
 static constexpr uint64_t kOutputTimeout = 1000000; // 1 s before returning to MC
@@ -59,10 +61,11 @@ inline float remaining(float elapsed)
 class ThrottleSlew
 {
 public:
-	void reset(float output, float rate)
+	void reset(float output, float rate, float rise_scale = 2.f)
 	{
 		_output = math::constrain(output, 0.f, 1.f);
 		_rate = PX4_ISFINITE(rate) ? math::max(rate, 0.f) : 0.f;
+		_rise_rate = _rate * (PX4_ISFINITE(rise_scale) ? math::max(rise_scale, 0.f) : 2.f);
 		_previous_demand = NAN;
 		_previous_timestamp = 0;
 		_demand_slew_compatible = false;
@@ -78,8 +81,7 @@ public:
 
 		if (!_active) { return demand; }
 
-		// Faster rises preserve lift/airspeed margin. No special pilot-stick bypass.
-		const float rise = 2.f * _rate;
+		const float rise = _rise_rate;
 
 		if (timestamp > _previous_timestamp) {
 			const float source_dt = (timestamp - _previous_timestamp) * 1e-6f;
@@ -91,7 +93,7 @@ public:
 			_previous_demand = demand;
 		}
 
-		// Pending acknowledgement and the first accepted output retain exact MC collective.
+		// Pending acknowledgement and the first accepted output retain exact outgoing collective.
 		if (dt <= 0.f) { return _output; }
 
 		if (_rate <= FLT_EPSILON) {
@@ -117,6 +119,7 @@ public:
 private:
 	float _output{0.f};
 	float _rate{0.f};
+	float _rise_rate{0.f};
 	float _previous_demand{NAN};
 	uint64_t _previous_timestamp{0};
 	bool _demand_slew_compatible{false};

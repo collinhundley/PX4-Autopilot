@@ -276,7 +276,8 @@ void FixedwingRateControl::Run()
 		_handoff_sub.update(&_handoff);
 
 		if (!_vehicle_status.is_vtol_tailsitter || !_in_fw_or_transition_wo_tailsitter_transition
-		    || !_vcontrol_mode.flag_armed || _landed || !_vcontrol_mode.flag_control_rates_enabled || _handoff.handoff_id == 0) {
+		    || !_vcontrol_mode.flag_armed || _landed || !_vcontrol_mode.flag_control_rates_enabled || _handoff.handoff_id == 0
+		    || _handoff.to_mc) {
 			_handoff_initialized = 0;
 			_throttle_slew.cancel();
 			_handoff_trim.zero();
@@ -295,6 +296,8 @@ void FixedwingRateControl::Run()
 			perf_end(_loop_perf);
 			return;
 		}
+
+		tailsitter_handoff_s outgoing_state{};
 
 		if (_vcontrol_mode.flag_control_rates_enabled) {
 
@@ -421,7 +424,7 @@ void FixedwingRateControl::Run()
 				const Vector3f output_gain = _gain_compression.getGains() * (_airspeed_scaling * _airspeed_scaling);
 				const bool initialize_handoff = _vehicle_status.is_vtol_tailsitter
 								&& _in_fw_or_transition_wo_tailsitter_transition && _vcontrol_mode.flag_armed && !_landed
-								&& _handoff.handoff_id != 0 && !_handoff.active && _handoff_initialized != _handoff.handoff_id
+								&& !_handoff.to_mc && _handoff.handoff_id != 0 && !_handoff.active && _handoff_initialized != _handoff.handoff_id
 								&& _rates_sp.timestamp > _handoff.handoff_id
 								&& PX4_ISFINITE(_rates_sp.thrust_body[0]) && body_rates_setpoint.isAllFinite()
 								&& PX4_ISFINITE(_handoff.thrust) && Vector3f(_handoff.torque).isAllFinite()
@@ -446,6 +449,11 @@ void FixedwingRateControl::Run()
 				const bool matching = _handoff_initialized != 0 && _handoff_initialized == _handoff.handoff_id;
 				const float remaining = matching ? tailsitter_handoff::remaining(_handoff_elapsed) : 0.f;
 				body_rates_setpoint += remaining * _handoff_rate_offset;
+				// Snapshot the effective steady bias before this sample integrates rate error.
+				Vector3f outgoing_bias = output_gain.emult(_rate_control.getIntegral()) + _handoff_trim + trim;
+				outgoing_bias(2) += _param_fw_rll_to_yaw_ff.get() * math::constrain(outgoing_bias(0), -1.f, 1.f);
+				tailsitter_handoff::toMC(outgoing_bias).copyTo(outgoing_state.torque_bias);
+				tailsitter_handoff::toMC(body_rates_setpoint).copyTo(outgoing_state.rates);
 				const Vector3f angular_acceleration_setpoint = _rate_control.update(rates, body_rates_setpoint, angular_accel, dt,
 						_landed || (matching && !_handoff.active));
 				Vector3f control_u = output_gain.emult(angular_acceleration_setpoint) + _handoff_trim;
@@ -595,7 +603,7 @@ void FixedwingRateControl::Run()
 				_handoff_elapsed += dt;
 			}
 
-			if (_handoff_ack_pending && angular_velocity.timestamp_sample > _handoff.handoff_id
+			if (_handoff_ack_pending && !_handoff.to_mc && angular_velocity.timestamp_sample > _handoff.handoff_id
 			    && Vector3f(_vehicle_torque_setpoint.xyz).isAllFinite()
 			    && PX4_ISFINITE(_vehicle_thrust_setpoint.xyz[0])) {
 				tailsitter_handoff_s ack{};
@@ -605,6 +613,17 @@ void FixedwingRateControl::Run()
 				_handoff_ack_pub.publish(ack);
 				_handoff_ack_pending = false;
 			}
+
+		}
+
+		if (_vehicle_status.is_vtol_tailsitter && is_fixed_wing && _vcontrol_mode.flag_control_attitude_enabled
+		    && _vcontrol_mode.flag_control_rates_enabled) {
+			outgoing_state.timestamp = hrt_absolute_time();
+			outgoing_state.timestamp_sample = angular_velocity.timestamp_sample;
+			outgoing_state.timestamp_setpoint = _rates_sp.timestamp;
+			Vector3f(_vehicle_torque_setpoint.xyz).copyTo(outgoing_state.torque);
+			outgoing_state.thrust = _vehicle_thrust_setpoint.xyz[0];
+			_handoff_state_pub.publish(outgoing_state);
 		}
 
 		/* Only publish if any of the proper modes are enabled */

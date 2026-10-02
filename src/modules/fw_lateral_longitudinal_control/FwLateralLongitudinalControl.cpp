@@ -206,7 +206,7 @@ void FwLateralLongitudinalControl::Run()
 
 			_handoff_sub.update();
 
-			if (_vehicle_status_sub.get().is_vtol_tailsitter && _handoff_sub.get().handoff_id != 0
+			if (_vehicle_status_sub.get().is_vtol_tailsitter && !_handoff_sub.get().to_mc && _handoff_sub.get().handoff_id != 0
 			    && _handoff_sub.get().handoff_id != _tecs_handoff_id) {
 				_tecs_handoff_id = _handoff_sub.get().handoff_id;
 				_airspeed_slew_rate_controller.setForcedValue(NAN);
@@ -229,7 +229,7 @@ void FwLateralLongitudinalControl::Run()
 			float throttle_saturation = 0.f;
 			const auto &feedback = _handoff_status_sub.get();
 
-			if (_vehicle_status_sub.get().is_vtol_tailsitter && _handoff_sub.get().handoff_id != 0) {
+			if (_vehicle_status_sub.get().is_vtol_tailsitter && !_handoff_sub.get().to_mc && _handoff_sub.get().handoff_id != 0) {
 				if (feedback.handoff_id == _handoff_sub.get().handoff_id && feedback.throttle_slew_active
 				    && hrt_elapsed_time(&feedback.timestamp) < 100_ms && PX4_ISFINITE(feedback.thrust)
 				    && PX4_ISFINITE(feedback.demand) && PX4_ISFINITE(feedback.battery_scale) && feedback.battery_scale > 0.f) {

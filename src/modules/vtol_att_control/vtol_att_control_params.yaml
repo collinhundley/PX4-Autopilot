@@ -62,6 +62,23 @@ parameters:
       max: 10.0
       increment: 0.05
       decimal: 2
+    VT_TS_B_THR_SLEW:
+      description:
+        short: Tailsitter back handoff throttle slew
+        long: |-
+          Maximum collective change per second in either direction while a normal
+          fixed-wing to multicopter handoff acquires the live MC demand.
+          Reacquires demand once when the transition flight task ends.
+          Replaces the fixed back-transition throttle blend. Does not limit normal
+          hover, forward transition or quad-chute recovery. Zero disables the slew
+          but retains first-output matching. No controller tuning is changed.
+      type: float
+      default: 0.5
+      unit: 1/s
+      min: 0.0
+      max: 10.0
+      increment: 0.1
+      decimal: 2
     VT_F_TRANS_THR:
       description:
         short: Target throttle value for the transition to fixed-wing flight

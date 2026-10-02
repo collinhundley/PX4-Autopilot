@@ -256,6 +256,8 @@ void LoggedTopics::add_default_topics()
 #ifdef CONFIG_ARCH_BOARD_PX4_SITL
 	add_topic("fw_virtual_attitude_setpoint");
 	add_topic("tailsitter_handoff_mc", 20);
+	add_topic("tailsitter_handoff_fw", 20);
+	add_topic("vehicle_rates_setpoint_virtual_mc");
 	add_topic("vehicle_rates_setpoint_virtual_fw");
 	add_topic("tecs_status", 20);
 	add_topic("mc_virtual_attitude_setpoint");

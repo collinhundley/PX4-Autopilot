@@ -34,6 +34,7 @@
 #pragma once
 
 #include <lib/rate_control/rate_control.hpp>
+#include <lib/rate_control/tailsitter_handoff.hpp>
 #include <lib/mathlib/math/filter/AlphaFilter.hpp>
 #include <lib/matrix/matrix/math.hpp>
 #include <lib/perf/perf_counter.h>
@@ -54,6 +55,7 @@
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/rate_ctrl_status.h>
 #include <uORB/topics/tailsitter_handoff.h>
+#include <uORB/topics/tailsitter_handoff_status.h>
 #include <uORB/topics/vehicle_angular_velocity.h>
 #include <uORB/topics/vehicle_control_mode.h>
 #include <uORB/topics/vehicle_land_detected.h>
@@ -84,7 +86,25 @@ public:
 	bool init();
 
 private:
+	friend class TailsitterHandoffTest;
 	uORB::Publication<tailsitter_handoff_s> _handoff_state_pub{ORB_ID(tailsitter_handoff_mc)};
+	uORB::Subscription _handoff_sub{ORB_ID(tailsitter_handoff)};
+	uORB::Subscription _virtual_rates_sub{ORB_ID(vehicle_rates_setpoint_virtual_mc)};
+	uORB::Publication<tailsitter_handoff_s> _handoff_ack_pub{ORB_ID(tailsitter_handoff_ack)};
+	uORB::Publication<tailsitter_handoff_status_s> _handoff_status_pub{ORB_ID(tailsitter_handoff_status)};
+	tailsitter_handoff_s _handoff{};
+	uint64_t _handoff_initialized{0};
+	uint64_t _rates_setpoint_timestamp{0};
+	uint64_t _mc_reentry_timestamp{0};
+	float _handoff_elapsed{0.f};
+	float _handoff_slew_rate{0.f};
+	float _handoff_thrust{0.f};
+	bool _was_back_transition{false};
+	matrix::Vector3f _handoff_rate_offset{};
+	matrix::Vector3f _handoff_torque_offset{};
+	matrix::Vector3f _allocator_saturation{};
+	matrix::Vector3f _output_saturation{};
+	tailsitter_handoff::ThrottleSlew _throttle_slew;
 	void Run() override;
 
 	/**
