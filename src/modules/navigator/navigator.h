@@ -228,7 +228,12 @@ public:
 	 * to its default value. Will automatically be reset to default
 	 * on mode switch.
 	 */
-	void set_cruising_speed(float desired_speed) { _cruising_speed_current_mode = desired_speed; }
+	void set_cruising_speed(float desired_speed)
+	{
+		_cruising_speed_current_mode = desired_speed;
+		// Keep the cached waypoint consistent when republished, e.g. after a home altitude update.
+		_pos_sp_triplet.current.cruising_speed = desired_speed;
+	}
 
 	/**
 	 * Reset cruising speed to default values

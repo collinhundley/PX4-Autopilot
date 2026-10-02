@@ -141,6 +141,12 @@ public:
 		return _mission.current_seq;
 	}
 
+	bool setCurrentPositionItem(const mission_item_s &item)
+	{
+		_mission_item = item;
+		return mission_item_to_position_setpoint(item, &_navigator->get_position_setpoint_triplet()->current);
+	}
+
 	using MissionBase::findNextPositionIndex;
 	using MissionBase::findPreviousPositionIndex;
 	using MissionBase::getNonJumpItem;
@@ -211,6 +217,65 @@ protected:
 
 class MissionBaseTraversalTest : public MissionBaseTraversalTestBase<MissionBaseTestPeer> {};
 class IgnoreDoJumpMissionBaseTraversalTest : public MissionBaseTraversalTestBase<IgnoreDoJumpMissionBaseTestPeer> {};
+
+struct SpeedChangeCase {
+	float initial_speed;
+	float commanded_speed;
+	bool relative_altitude;
+};
+
+class MissionBaseSpeedChangeTest : public ::testing::TestWithParam<SpeedChangeCase>
+{
+protected:
+	static void SetUpTestSuite()
+	{
+		(void)navigatorDatamanRuntime();
+	}
+
+	Navigator _navigator{};
+	MissionBaseTestPeer mission_base{&_navigator};
+};
+
+TEST_P(MissionBaseSpeedChangeTest, HomeAltitudeUpdateRetainsCommandedSpeed)
+{
+	const auto &test_case = GetParam();
+	auto &home = *_navigator.get_home_position();
+	home.alt = 400.f;
+	home.valid_alt = true;
+	home.update_count = 1;
+
+	auto item = makePositionItem(kBaseLat, kBaseLon, kAlt);
+	item.altitude_is_relative = test_case.relative_altitude;
+	_navigator.set_cruising_speed(test_case.initial_speed);
+	ASSERT_TRUE(mission_base.setCurrentPositionItem(item));
+	mission_base.on_active();
+
+	const auto &current = _navigator.get_position_setpoint_triplet()->current;
+	const float original_altitude = current.alt;
+	ASSERT_FLOAT_EQ(current.cruising_speed, test_case.initial_speed);
+
+	// DO_CHANGE_SPEED updates the controller immediately. A subsequent home correction
+	// must not republish the old cached speed and undo the command.
+	_navigator.set_cruising_speed(test_case.commanded_speed);
+	home.alt -= 1.f;
+	home.update_count++;
+	mission_base.on_active();
+
+	EXPECT_FLOAT_EQ(current.alt, original_altitude - (test_case.relative_altitude ? 1.f : 0.f));
+	EXPECT_DOUBLE_EQ(current.lat, item.lat);
+	EXPECT_DOUBLE_EQ(current.lon, item.lon);
+	EXPECT_FLOAT_EQ(current.cruising_speed, test_case.commanded_speed);
+	EXPECT_FLOAT_EQ(_navigator.get_cruising_speed(), test_case.commanded_speed);
+
+	// Rebuilding the waypoint must agree with the cached waypoint as well.
+	ASSERT_TRUE(mission_base.setCurrentPositionItem(item));
+	EXPECT_FLOAT_EQ(current.cruising_speed, test_case.commanded_speed);
+}
+
+INSTANTIATE_TEST_SUITE_P(SpeedChanges, MissionBaseSpeedChangeTest, ::testing::Values(
+				 SpeedChangeCase{-1.f, 20.f, true},
+				 SpeedChangeCase{15.f, 20.f, true},
+				 SpeedChangeCase{20.f, 15.f, false}));
 
 // WHY: getNonJumpItem is used to find the next mission item.
 // WHAT: A non-DO_JUMP item is returned unchanged.
