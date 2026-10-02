@@ -200,10 +200,17 @@ void ControlTiming::observe(uint64_t first, uint64_t end, uint64_t burst_first, 
 			_too_fast = true;
 		}
 
-		if (!_too_fast && control_interval_qualified(_previous_lower_us, _previous_upper_us,
-				start_lower_us, start_upper_us)) {
+		if (control_interval_qualified(_previous_lower_us, _previous_upper_us,
+					       start_lower_us, start_upper_us)) {
 			if (_qualified_intervals < 2) {
 				++_qualified_intervals;
+			}
+
+			// Startup or RF-loss traffic can have a different cadence from
+			// normal channel data. Require the same complete qualification
+			// as startup before clearing an earlier fast-stream verdict.
+			if (_qualified_intervals >= 2) {
+				_too_fast = false;
 			}
 
 		} else {

@@ -182,8 +182,9 @@ static void test_control_timing_qualification()
 	timing.invalidate();
 	observe_control(timing, 168, 138500, 28);
 	observe_control(timing, 196, 149500, 28);
-	observe_control(timing, 224, 160500, 28);
 	assert(!timing.qualified() && timing.too_fast());
+	observe_control(timing, 224, 160500, 28);
+	assert(timing.qualified() && !timing.too_fast());
 
 	// A missing IDLE timestamp, partial/coalesced burst, or inconsistent byte
 	// range resets qualification. No old observation bridges that uncertainty.
@@ -211,6 +212,67 @@ static void test_control_timing_qualification()
 	assert(!timing.qualified());
 	observe_control(timing, 364, 265000, 28);
 	assert(timing.qualified());
+}
+
+static void test_control_timing_recovery()
+{
+	for (const uint64_t period : {11000, 22000}) {
+		ControlTiming timing;
+		uint64_t sequence = 0;
+		uint64_t start = 100000;
+		auto observe = [&](size_t length) {
+			observe_control(timing, sequence, start, length);
+			sequence += length;
+		};
+
+		// Short zero-channel packets before RF acquisition must not latch
+		// telemetry off after normal 11/22 ms channel traffic begins.
+		for (unsigned i = 0; i < 10; ++i) {
+			observe(14);
+			assert(!timing.qualified());
+			start += 5500;
+		}
+
+		assert(timing.too_fast());
+		observe(28); // First RF packet can still have a short preceding interval.
+		assert(!timing.qualified());
+		start += period;
+		observe(28);
+		assert(!timing.qualified() && timing.too_fast());
+		start += period;
+		observe(28);
+		assert(timing.qualified() && !timing.too_fast());
+
+		// Another short interval immediately suppresses replies again.
+		start += 5500;
+		observe(14);
+		assert(!timing.qualified() && timing.too_fast());
+
+		// Missing alternate 5.5 ms packets must not look like recovery.
+		for (unsigned i = 0; i < 10; ++i) {
+			sequence += 14;
+			start += 11000;
+			observe(14);
+			assert(!timing.qualified() && timing.too_fast());
+		}
+
+		// Silence/invalid timing alone cannot clear the fast-stream verdict.
+		timing.invalidate();
+		start += BusTimeoutUs;
+		observe(28);
+		start += period;
+		observe(28);
+		assert(!timing.qualified() && timing.too_fast());
+		timing.invalidate();
+		start += period;
+		observe(28);
+		start += period;
+		observe(28);
+		assert(!timing.qualified() && timing.too_fast());
+		start += period;
+		observe(28);
+		assert(timing.qualified() && !timing.too_fast());
+	}
 }
 
 static void test_stream_parser()
@@ -526,6 +588,7 @@ int main()
 	test_crc_and_scaling();
 	test_control_timing_bounds();
 	test_control_timing_qualification();
+	test_control_timing_recovery();
 	test_stream_parser();
 	test_resynchronization();
 	test_handshake_and_restart();

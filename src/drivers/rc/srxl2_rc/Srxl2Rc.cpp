@@ -288,7 +288,7 @@ void Srxl2Rc::check_control_timing()
 				timing.idle_observed_us, _control_length);
 
 	if (!was_fast && _control_timing.too_fast()) {
-		PX4_WARN("control timing below 11 ms: telemetry disabled until restart");
+		PX4_WARN("control timing below 11 ms: telemetry paused until timing qualifies");
 	}
 
 	_check_timing = false;

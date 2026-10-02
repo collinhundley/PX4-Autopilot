@@ -81,6 +81,7 @@ public:
 	void observe(uint64_t first, uint64_t end, uint64_t burst_first, uint64_t burst_end,
 		     uint64_t start_lower_us, uint64_t idle_us, size_t packet_length);
 	// Forget the timing baseline, while retaining a proven unsupported period.
+	// Only two new qualified intervals can clear that verdict.
 	void invalidate();
 	bool qualified() const { return !_too_fast && _qualified_intervals >= 2; }
 	bool too_fast() const { return _too_fast; }

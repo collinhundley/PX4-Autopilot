@@ -67,7 +67,9 @@ TextGen forwards the `mavlink_log` topic and does not display every structured e
 
 Telemetry is sent only in receiver-granted slots, after two control-frame intervals qualify as supported.
 A busy UART, uncertain timing, or expired reply window causes the reply to be skipped.
-Unsupported faster control timing disables aircraft telemetry until driver restart; RC reception continues.
+Unsupported faster control timing pauses telemetry replies; RC reception continues.
+Telemetry resumes automatically after two consecutive, fully observed control-frame intervals qualify as supported, including when the transmitter is switched on after the flight controller.
+Missing packets, uncertain timing, or bus silence require fresh timing qualification before replies can resume.
 
 ## Diagnostics
 

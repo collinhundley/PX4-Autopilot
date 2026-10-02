@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Run the production driver with a task-group-scoped fake UART.
+"""Run the production driver with a task-group-scoped, timed fake UART.
 
 POSIX shares descriptors across threads and cannot reproduce this NuttX bug.
 The harness models separate launcher/worker descriptor tables and scheduling;
 it compiles the actual driver methods and protocol, without UART hardware.
+Timed packet replay also checks telemetry recovery when RF starts after boot.
 """
 
 import argparse
@@ -39,6 +40,7 @@ inline unsigned open_failures = 0, read_error = 0, publications = 0;
 inline unsigned perf_active = 0, telemetry_updates = 0;
 inline uint64_t sequence = 0;
 inline std::vector<uint8_t> wire;
+inline std::vector<std::vector<uint8_t>> transmitted;
 inline int owner_group = -1;
 inline uint64_t hrt_absolute_time() { return now_us; }
 using px4_guid_t = uint8_t[16];
@@ -142,13 +144,15 @@ struct FakeParamBool { bool get() const { return true; } };
 class Srxl2Telemetry {
 public:
     void update(uint64_t) { ++telemetry_updates; }
-    bool nextPayload(uint64_t, uint8_t payload[16]) { memset(payload, 0, 16); return true; }
+    bool nextPayload(uint64_t, uint8_t payload[16]) { memset(payload, 0, 16); payload[0] = 0x7f; return true; }
     uint32_t droppedMessages() const { return 0; }
 };
 '''
 
 harness = r'''
 #include "Srxl2Rc.hpp"
+
+static Srxl2Transport::Timing rx_timing;
 
 bool Srxl2Transport::open(const char *)
 {
@@ -172,19 +176,31 @@ ssize_t Srxl2Transport::read(uint8_t *buffer, size_t capacity, RxChunk &chunk)
     for (size_t i = 0; i < count; ++i) { buffer[i] = wire[i]; }
     wire.erase(wire.begin(), wire.begin() + count);
     chunk.first_sequence = sequence; sequence += count; chunk.end_sequence = sequence;
+    if (count) {
+        rx_timing = {};
+        rx_timing.first_sequence = chunk.first_sequence;
+        rx_timing.end_sequence = chunk.end_sequence;
+        rx_timing.start_lower_bound_us = now_us - 3000;
+        rx_timing.idle_observed_us = rx_timing.start_lower_bound_us
+            + 100 + (count * 10000000 + 115199) / 115200 + 87;
+        rx_timing.valid = true;
+    }
     return count;
 }
 bool Srxl2Transport::packetTiming(uint64_t first, uint64_t end, Timing &timing)
 {
     assert(owner_group == task_group);
-    timing = {}; timing.first_sequence = first; timing.end_sequence = end;
-    timing.start_lower_bound_us = now_us - 1000; timing.valid = true;
-    return true;
+    timing = rx_timing;
+    return timing.valid && first >= timing.first_sequence && end <= timing.end_sequence;
 }
-Srxl2Transport::TxResult Srxl2Transport::tryTransmit(const uint8_t *, size_t,
-        uint64_t, uint64_t, bool)
+Srxl2Transport::TxResult Srxl2Transport::tryTransmit(const uint8_t *data, size_t length,
+        uint64_t first, uint64_t end, bool)
 {
-    assert(owner_group == task_group); return TxResult::Sent;
+    assert(owner_group == task_group);
+    assert(first == rx_timing.first_sequence && end == rx_timing.end_sequence);
+    assert(srxl2::crc16(data, length) == 0);
+    transmitted.emplace_back(data, data + length);
+    return TxResult::Sent;
 }
 static Srxl2Rc *start()
 {
@@ -207,12 +223,67 @@ static void stop(Srxl2Rc *driver)
     run(driver); assert(!Srxl2Rc::desc.object.load());
     assert(owner_group == -1);
 }
-static void controls()
+static void finish_packet()
 {
-    wire = {0xa6, 0xcd, 22, 0, 0, 83, 0, 0, 15, 0, 0, 0,
-            0, 0x80, 0, 0x80, 0, 0x80, 0, 0x80};
+    wire[2] = wire.size() + 2;
     uint16_t crc = srxl2::crc16(wire.data(), wire.size());
     wire.push_back(crc >> 8); wire.push_back(crc);
+}
+static void controls(uint8_t mask = 15, uint8_t reply = 0)
+{
+    wire = {0xa6, 0xcd, 0, 0, reply, 83, 0, 0, mask, 0, 0, 0};
+    for (unsigned i = 0; i < 8; ++i) {
+        if (mask & (1u << i)) { wire.push_back(0); wire.push_back(0x80); }
+    }
+    finish_packet();
+}
+static void test_telemetry_recovery(uint64_t period)
+{
+    auto *driver = start();
+    transmitted.clear();
+    // Complete discovery while the transmitter is still off.
+    wire = {0xa6, 0x21, 0, 0x10, srxl2::DeviceId, 10, 0, 3, 1, 0, 0, 0};
+    finish_packet(); run(driver);
+    assert(transmitted.size() == 1 && transmitted.back()[1] == 0x21);
+    wire = {0xa6, 0x21, 0, 0x10, 0xff, 10, 0, 3, 1, 0, 0, 0};
+    finish_packet(); run(driver);
+    transmitted.clear();
+    uint64_t packet_time = now_us;
+    auto receive = [&](uint64_t interval, uint8_t mask, uint8_t reply = srxl2::DeviceId) {
+        packet_time += interval; now_us = packet_time;
+        controls(mask, reply); run(driver);
+    };
+    for (unsigned i = 0; i < 10; ++i) {
+        receive(5500, 0);
+        assert(last_input.rc_lost && transmitted.empty());
+    }
+    assert(driver->_control_timing.too_fast());
+
+    // Turning the transmitter on restores RC immediately; telemetry needs
+    // two complete supported intervals, without restarting the driver.
+    receive(5500, 15);
+    assert(!last_input.rc_lost && transmitted.empty());
+    receive(period, 15);
+    assert(transmitted.empty());
+    receive(period, 15);
+    assert(transmitted.size() == 1 && "telemetry remains disabled after late RF acquisition");
+    assert(transmitted.back()[1] == 0x80 && transmitted.back()[3] == 0x10);
+    assert(transmitted.back()[4] == 0x7f); // Actual payload, not an empty keepalive.
+    receive(period, 15, 0); // A qualified bus is not permission to send unsolicited replies.
+    assert(transmitted.size() == 1);
+
+    // Repeated transmitter loss/recovery must also recover without restart.
+    for (unsigned cycle = 0; cycle < 2; ++cycle) {
+        transmitted.clear();
+        for (unsigned i = 0; i < 20; ++i) { receive(5500, 0); }
+        assert(last_input.rc_lost && transmitted.empty());
+        receive(5500, 15);
+        receive(period, 15);
+        assert(!last_input.rc_lost && transmitted.empty());
+        receive(period, 15);
+        assert(transmitted.size() == 1 && transmitted.back()[4] == 0x7f);
+    }
+    stop(driver);
 }
 int main()
 {
@@ -250,7 +321,10 @@ int main()
     assert(!last_input.rc_lost && driver->_io_errors == 0);
     stop(driver);
     assert(opens == 4 && closes == 3 && perf_active == 0);
+    test_telemetry_recovery(11000);
+    test_telemetry_recovery(22000);
     puts("SRXL2 driver: worker-owned UART, RC input, startup failure, stop/restart and IO failure checks passed");
+    puts("SRXL2 telemetry: late transmitter startup and repeated RF recovery at 11/22 ms passed");
 }
 '''
 
