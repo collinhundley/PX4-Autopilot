@@ -5,7 +5,7 @@ Build px4_sitl_test (or px4_sitl_default), then run:
   python3 src/drivers/osd/msp_osd/test_displayport.py build/px4_sitl_test
 
 Reconstructs DisplayPort grids, checks all requested fields, metric/imperial
-units, canvas negotiation/overrides, disabled/re-enabled OSD, malformed receive
+units, live item positioning, canvas negotiation/overrides, disabled/re-enabled OSD, malformed receive
 traffic, checksums, frame bandwidth, and disabled RC-stick forwarding. Numeric
 values may be unavailable in disarmed SITL; semantic values are unit-tested.
 """
@@ -24,28 +24,16 @@ import time
 
 FULL_MASK = ((1 << 30) - 1) & ~(1 << 15)  # ESC temperature remains unsupported.
 ALTITUDE_MASK = 1 << 12
+# Literal defaults are shared by every canvas; smaller canvases clip fields.
 POSITIONS = {
-    (60, 22): {
-        "mode": (1, 0, 25), "time": (49, 0, 10), "home_arrow": (27, 0),
-        "home": (29, 0, 12), "ground_speed": (13, 10, 10), "airspeed": (13, 7, 10),
-        "altitude": (38, 7, 22), "throttle": (1, 21, 9), "voltage": (15, 19, 30),
-        "battery_group": (15, 20, 30), "horizon": (30, 8),
-        "compensated_voltage": (15, 21, 30),
-    },
-    (50, 18): {
-        "mode": (1, 0, 20), "time": (39, 0, 10), "home_arrow": (22, 0),
-        "home": (24, 0, 12), "ground_speed": (8, 8, 10), "airspeed": (8, 5, 10),
-        "altitude": (33, 5, 17), "throttle": (1, 17, 9), "voltage": (10, 15, 30),
-        "battery_group": (10, 16, 30), "horizon": (25, 6),
-        "compensated_voltage": (10, 17, 30),
-    },
-    (30, 16): {
-        "mode": (0, 0, 18), "time": (19, 0, 10), "home_arrow": (1, 1),
-        "home": (3, 1, 16), "ground_speed": (0, 8, 8), "airspeed": (0, 5, 8),
-        "altitude": (23, 5, 7), "throttle": (0, 15, 9), "voltage": (0, 9, 30),
-        "battery_group": (0, 12, 30), "horizon": (15, 6),
-        "compensated_voltage": (11, 13, 19),
-    },
+    "mode": (1, 1, 16), "arm": (18, 1, 4), "time": (42, 1, 10),
+    "home_arrow": (23, 1), "home": (25, 1, 12),
+    "ground_speed": (11, 9, 8), "airspeed": (11, 6, 8),
+    "altitude": (34, 6, 12), "throttle": (1, 19, 9),
+    "voltage": (21, 17, 5), "cell_voltage": (27, 17, 5),
+    "compensated_voltage": (20, 19, 7), "compensated_cell_voltage": (28, 19, 5),
+    "percentage": (16, 18, 6), "capacity": (24, 18, 8), "current": (32, 18, 8),
+    "horizon": (26, 7),
 }
 
 
@@ -110,12 +98,16 @@ def complete_frames(packets):
 
 def reconstruct(frame, canvas):
     columns, rows = canvas
-    profile = {(60, 22): 3, (50, 18): 1, (30, 16): 0}[canvas]
-    assert frame[:3] == [b"\x00", bytes([5, 0, profile]), b"\x02"], "Missing heartbeat/canvas/clear"
+    profile = {(60, 22): 3, (50, 18): 1, (30, 16): 0}.get(canvas)
+    prefix = [b"\x00"]
+    if profile is not None:
+        prefix.append(bytes([5, 0, profile]))
+    prefix.append(b"\x02")
+    assert frame[:len(prefix)] == prefix, "Incorrect heartbeat/canvas/clear sequence"
     assert frame[-1] == b"\x04", "Missing draw"
     grid = [[ord(' ')] * columns for _ in range(rows)]
     writes = []
-    for payload in frame[3:-1]:
+    for payload in frame[len(prefix):-1]:
         assert 5 <= len(payload) <= 35 and payload[0] == 3, payload
         row, column, attribute = payload[1:4]
         assert attribute <= 1, f"Unexpected glyph page/attributes: {attribute}"
@@ -140,7 +132,7 @@ def region(grid, rectangle):
 
 
 def check_fields(grid, writes, canvas, imperial, inav=False):
-    positions = POSITIONS[canvas]
+    positions = POSITIONS
     distance = chr((0x74 if imperial else 0x82) if inav else (0x0f if imperial else 0x0c))
     altitude = chr((0x78 if imperial else 0x76) if inav else (0x0f if imperial else 0x0c))
     speed = chr((0x91 if imperial else 0x8f) if inav else (0x9d if imperial else 0x9f))
@@ -150,30 +142,42 @@ def check_fields(grid, writes, canvas, imperial, inav=False):
     speed_icon = chr(0x17 if inav else 0x70)
     airspeed_prefix = chr(0x8c) + r" \*?" if inav else r"AS(?: |\*)"
     battery_icon = f"[{chr(0x63)}-{chr(0x69)}]" if inav else f"[{chr(0x90)}-{chr(0x96)}]"
-    gap = "   " if canvas[0] >= 50 else "  "
     scalar = r"(?:--|-?\d+(?:\.\d+)?)"
     patterns = {
         "home": rf"{scalar}{distance}",
-        "ground_speed": rf"{speed_icon} {scalar}{speed}",
-        "airspeed": rf"{airspeed_prefix}{scalar}{speed}",
+        "ground_speed": rf"{speed_icon} \d+\.\d{speed}",
+        "airspeed": rf"{airspeed_prefix}\d+\.\d{speed}",
         "altitude": rf"{scalar}{altitude}",
         "throttle": rf"{throttle_icon} {scalar}%",
-        "voltage": rf"{scalar}V/{scalar}V",
-        "compensated_voltage": rf"C {scalar}V/{scalar}V",
-        "battery_group": rf"{battery_icon} {scalar}%{gap}{scalar}{mah}{gap}{scalar}{amps}",
+        "voltage": rf"{scalar}V", "cell_voltage": rf"{scalar}V",
+        "compensated_voltage": rf"C {scalar}V", "compensated_cell_voltage": rf"{scalar}V",
+        "percentage": rf"{battery_icon} {scalar}%", "capacity": rf"{scalar}(?:{mah}|AH|{chr(0xd3)})",
+        "current": rf"{scalar}{amps}",
     }
+    def fits(rectangle):
+        x, y, width = rectangle
+        return y < canvas[1] and x + width <= canvas[0]
+
     for name, pattern in patterns.items():
+        if not fits(positions[name]):
+            continue  # Bounds and clipped packets are validated by reconstruct().
         text = region(grid, positions[name])
         assert re.fullmatch(pattern, text), (name, text, pattern)
+    for row, separator_column in ((17, 26), (19, 27)):
+        if row < canvas[1] and separator_column < canvas[0]:
+            assert grid[row][separator_column] == ord('/'), (row, separator_column)
     mode = region(grid, positions["mode"])
-    assert mode and re.fullmatch(r"[A-Z0-9 />?_! -]+ (?:ARM|DIS)!?", mode), mode
+    assert mode and re.fullmatch(r"[A-Z0-9 />?_! -]+", mode), mode
+    arm = region(grid, positions["arm"])
+    assert re.fullmatch(r"(?:ARM|DIS)!?|--", arm), arm
     assert not any('PX4' in ''.join(map(chr, row)) for row in grid)
-    timer = region(grid, positions["time"])
-    timer_icon = chr(0x9f if inav else 0x9c)
-    assert re.fullmatch(rf"{timer_icon} (?:--:--|\d{{2}}:\d{{2}}(?::\d{{2}})?|>99H)", timer), timer
+    if fits(positions["time"]):
+        timer = region(grid, positions["time"])
+        timer_icon = chr(0x9f if inav else 0x9c)
+        assert re.fullmatch(rf"{timer_icon} (?:--:--|\d{{2}}:\d{{2}}(?::\d{{2}})?|>99H)", timer), timer
     arrow_x, arrow_y = positions["home_arrow"]
     arrow = grid[arrow_y][arrow_x]
-    assert (arrow == ord('-') or 0x13c <= arrow <= 0x14b) if inav else (arrow == ord('?') or 0x60 <= arrow <= 0x6f), arrow
+    assert (0x13c <= arrow <= 0x14b) if inav else (0x60 <= arrow <= 0x6f), arrow
     center_x, center_y = positions["horizon"]
     horizon_text = grid[center_y][center_x - 5:center_x + 6]
     first_bar = 0x14c if inav else 0x80
@@ -193,13 +197,14 @@ def check_frames(packets, canvas, imperial, altitude_only=False, inav=False):
     largest = 0
     for frame in frames:
         grid, writes = reconstruct(frame, canvas)
+        assert all(value == ord(' ') for value in grid[0]), "Default coordinates must leave a top margin"
         # 115200 baud 8N1 at 10Hz permits 1152 bytes/cycle. Reserve >10% margin.
         frame_bytes = sum(len(payload) + 6 for payload in frame) + metadata_size
         largest = max(largest, frame_bytes)
         assert frame_bytes <= 1024, f"Frame too large for UART budget: {frame_bytes}"
         if altitude_only:
             assert len(writes) == 1, writes
-            text = region(grid, POSITIONS[canvas]["altitude"])
+            text = region(grid, POSITIONS["altitude"])
             unit = chr((0x78 if imperial else 0x76) if inav else (0x0f if imperial else 0x0c))
             assert re.fullmatch(rf"(?:--|-?\d+){unit}", text), text
         else:
@@ -260,7 +265,7 @@ def main():
                 set_parameter("OSD_CANVAS", 0)
                 set_parameter("OSD_CAM_PITCH", 0)
                 cli("msp_osd", "start", "-d", device)
-                check_frames(settled_capture(), (60, 22), imperial=True)
+                check_frames(settled_capture(), (53, 20), imperial=True)
                 set_parameter("OSD_FONT", 1)
                 set_parameter("OSD_CANVAS", 3)
                 check_frames(settled_capture(), (60, 22), imperial=True, inav=True)
@@ -273,7 +278,7 @@ def main():
                 set_parameter("OSD_CANVAS", 0)
 
                 set_parameter("OSD_UNITS", 0)
-                check_frames(settled_capture(), (60, 22), imperial=False)
+                check_frames(settled_capture(), (53, 20), imperial=False)
 
                 # Invalid lengths/indices must not overrun VTX tables or stall the work queue.
                 malformed = [request(89), request(89, b"\xff"), request(89, b"\xff\xff"),
@@ -287,7 +292,7 @@ def main():
                 bad_crc = bytearray(request(188, bytes([30, 16])))
                 bad_crc[-1] ^= 1
                 os.write(master, b"junk$?" + b"".join(malformed) + bad_crc)
-                check_frames(capture(master, 2, pending), (60, 22), imperial=False)
+                check_frames(capture(master, 2, pending), (53, 20), imperial=False)
                 # Split the header, payload and checksum over separate driver runs.
                 packet = request(188, bytes([30, 16]))
                 for fragment in (packet[:1], packet[1:4], packet[4:6], packet[6:7], packet[7:]):
@@ -303,6 +308,43 @@ def main():
                 os.write(master, request(188, bytes([60, 22])))
                 check_frames(settled_capture(), (30, 16), imperial=True)
 
+                set_parameter("OSD_CANVAS", 4)
+                set_parameter("OSD_FONT", 1)
+                check_frames(settled_capture(), (53, 20), imperial=True, inav=True)
+                set_parameter("OSD_CANVAS", 0)
+                os.write(master, request(188, bytes([53, 20])))
+                check_frames(settled_capture(), (53, 20), imperial=True, inav=True)
+
+                # Move a normal field, a grouped battery field and a centre-anchored
+                # graphic without restarting the driver, then reset their fixed defaults.
+                set_parameter("OSD_FONT", 0)
+                set_parameter("OSD_SYMBOLS", (1 << 23) | (1 << 9) | (1 << 18))
+                for name, value in (("OSD_POS_ASPD_X", 2), ("OSD_POS_ASPD_Y", 4),
+                                    ("OSD_POS_CURR_X", 4), ("OSD_POS_CURR_Y", 17),
+                                    ("OSD_POS_CROSS_X", 40), ("OSD_POS_CROSS_Y", 10)):
+                    set_parameter(name, value)
+                frames = complete_frames(settled_capture())
+                assert len(frames) >= 5
+                for frame in frames:
+                    grid, writes = reconstruct(frame, (53, 20))
+                    assert re.fullmatch(r"AS(?: |\*)\d+\.\d\x9d", region(grid, (2, 4, 10)))
+                    assert re.fullmatch(r"(?:--|\d+\.\d)\x9a", region(grid, (4, 17, 10)))
+                    assert grid[10][39:42] == [0x72, 0x73, 0x74]
+                    assert all(value == ord(' ') for value in grid[6]), "Old airspeed row was not cleared"
+                print("PASS: live X/Y positioning for airspeed, current and crosshair")
+                for prefix in ("OSD_POS_ASPD", "OSD_POS_CURR", "OSD_POS_CROSS"):
+                    for axis in ("X", "Y"):
+                        cli("param", "reset", prefix + "_" + axis)
+                set_parameter("OSD_SYMBOLS", FULL_MASK)
+                check_frames(settled_capture(), (53, 20), imperial=True)
+                # Firmware before fixed defaults allowed saved -1 coordinates.
+                # Migration must restore these axes without disturbing a valid axis.
+                set_parameter("OSD_POS_ASPD_X", -1)
+                set_parameter("OSD_POS_ASPD_Y", 6)
+                check_frames(settled_capture(), (53, 20), imperial=True)
+                print("PASS: reset and legacy negative coordinates restore fixed defaults")
+
+                os.write(master, request(188, bytes([60, 22])))
                 set_parameter("OSD_CANVAS", 0)
                 set_parameter("OSD_UNITS", 0)
                 set_parameter("OSD_SYMBOLS", ALTITUDE_MASK)

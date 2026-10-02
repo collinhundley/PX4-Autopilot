@@ -29,7 +29,7 @@ struct OsdData {
 	float current_a{NAN};
 	float discharged_mah{NAN};
 	float ground_speed_m_s{NAN};
-	float airspeed_m_s{NAN};
+	float airspeed_m_s{NAN}; // Validated calibrated airspeed (CAS).
 	bool airspeed_estimated{false};
 	float altitude_m{NAN};
 	float vertical_speed_m_s{NAN};
@@ -52,15 +52,52 @@ struct OsdData {
 	char message[31] {};
 };
 
+struct ItemPosition {
+	int16_t x{0}; // Zero-based column; graphical items use their centre.
+	int16_t y{0}; // Zero-based row; graphical items use their centre.
+};
+
 struct DisplaySettings {
 	uint32_t symbols{0};
 	bool imperial{true};
 	bool inav_font{false}; // Goggles N3 supports the INAV glyph map, including font page 1.
-	uint8_t columns{60};
-	uint8_t rows{22};
-	int crosshair_offset{0};
+	uint8_t columns{53};
+	uint8_t rows{20};
 	float camera_pitch_deg{0.f}; // Positive camera uptilt relative to body X.
 	float vertical_fov_deg{60.f};
+	// Fixed defaults match the OSD_POS_* parameters and the agreed 53x20 layout.
+	ItemPosition positions[BATT_PERC + 1] {
+		{0, 0}, // CRAFT_NAME
+		{18, 1}, // DISARMED
+		{1, 15}, // GPS_LAT
+		{28, 15}, // GPS_LON
+		{46, 18}, // GPS_SATS
+		{11, 9}, // GPS_SPEED
+		{22, 1}, // HOME_DIST
+		{23, 1}, // HOME_DIR
+		{21, 17}, // MAIN_BATT_VOLTAGE
+		{32, 18}, // CURRENT_DRAW
+		{24, 18}, // MAH_DRAWN
+		{46, 19}, // RSSI_VALUE
+		{34, 6}, // ALTITUDE
+		{41, 11}, // NUMERICAL_VARIO
+		{1, 1}, // FLYMODE
+		{0, 0}, // ESC_TMP
+		{1, 14}, // PITCH_ANGLE
+		{39, 14}, // ROLL_ANGLE
+		{26, 7}, // CROSSHAIRS
+		{27, 17}, // AVG_CELL_VOLTAGE
+		{26, 7}, // HORIZON_SIDEBARS
+		{1, 17}, // POWER
+		{42, 1}, // FLIGHT_TIME
+		{11, 6}, // AIRSPEED
+		{26, 7}, // ARTIFICIAL_HORIZON
+		{1, 3}, // MESSAGES
+		{1, 19}, // THROTTLE
+		{20, 19}, // BATT_COMP_VOLTAGE
+		{28, 19}, // BATT_CELL_COMP_VOLTAGE
+		{16, 18}, // BATT_PERC
+	};
 };
 
 } // namespace msp_osd

@@ -24,7 +24,11 @@ DisplayPort support was added in [PX4 pull request #24695](https://github.com/PX
 ### Displayed Items
 
 The DisplayPort renderer provides the following fields. Each field has its own `OSD_SYMBOLS` bit.
-Numeric fields show `--` when their source is unavailable, invalid or stale. An unavailable home-direction arrow is shown as `?`.
+Numeric fields show `--` when their source is unavailable, invalid or stale, except airspeed and ground speed, which show `0.0`.
+This speed fallback affects the display only; it does not change estimator validity or filter small valid speeds.
+When the home-direction item is enabled, it always renders an arrow.
+Unknown, invalid or stale home bearing or camera heading displays a straight-ahead arrow until a valid direction becomes available.
+This fallback affects the display only; it does not declare the home bearing valid.
 
 | Item | Value displayed |
 | ---- | --------------- |
@@ -35,10 +39,10 @@ Numeric fields show `--` when their source is unavailable, invalid or stale. An 
 | Battery remaining | Existing battery state-of-charge estimate (`battery_status.remaining`) as a percentage. |
 | Flight time | Time since Commander's takeoff timestamp, frozen at landing or disarm. The last duration remains until the next takeoff; this is not time since arming or boot. |
 | Flight mode | User-visible navigation mode, with `MC`, `FW`, `>MC` or `>FW` for VTOL state and transitions. |
-| Airspeed | Validated indicated airspeed (IAS). `*` after the airspeed glyph (or `AS*` in Betaflight mode) identifies an estimated source, such as ground speed minus wind or synthetic airspeed. Ground speed is not silently substituted. |
+| Airspeed | Validated calibrated airspeed (CAS) from `airspeed_validated.calibrated_airspeed_m_s`. `*` after the airspeed glyph (or `AS*` in Betaflight mode) identifies an estimated source, such as ground speed minus wind or synthetic airspeed. Ground speed is not silently substituted. |
 | Ground speed | Magnitude of fused horizontal velocity. |
 | Altitude | Height relative to home using valid local vertical position and the home altitude reference. There is no fallback to GNSS altitude above sea level. |
-| Home direction and distance | Horizontal distance from fused global position, plus an arrow relative to the camera's horizontal heading. Direction is unavailable at home or when the camera points nearly vertically. |
+| Home direction and distance | Horizontal distance from fused global position, plus an arrow relative to the camera's horizontal heading. When direction is unavailable at home or the camera points nearly vertically, the arrow points straight ahead. |
 | Artificial horizon | Earth horizon projected into the fixed camera frame, using vehicle attitude and camera mounting/FOV parameters. |
 | Messages | User-facing MAVLink log messages, including autotune progress at the default INFO threshold. |
 | Throttle percentage | Commanded thrust magnitude, using the larger valid, fresh VTOL thrust instance during transition. Axes marked NaN mean stopped motors and contribute zero, so an idle pusher does not hide hover thrust. This is operator feedback, not RC-stick position or measured motor output. Disarmed throttle is zero. |
@@ -78,26 +82,29 @@ Current, capacity, voltage, power and angles keep their electrical/angular units
 
 | Value | Canvas |
 | ----- | ------ |
-| `0` (default) | Accept the air unit's MSP canvas announcement; use 60 × 22 until a valid announcement arrives. |
+| `0` (default) | Accept the air unit's MSP canvas announcement; use 53 × 20 until a valid announcement arrives. |
 | `1` | 30 × 16 |
 | `2` | 50 × 18 |
 | `3` | 60 × 22 |
+| `4` | 53 × 20 (DJI O4 / Goggles N3) |
 
-The HD layout spans the full 16:9 canvas, with flight mode and arming state at top left, home information at top center, and flight time aligned to the right edge.
-Airspeed sits to the left of the centered horizon, altitude to the right, and ground speed below airspeed with two blank rows between them and aligned units. INAV mode prefixes airspeed with its dedicated airspeed icon; Betaflight mode uses `AS`.
+The default item coordinates use the 53 × 20 DJI layout: flight mode and arming state at top left, home information at top centre, and flight time at top right.
+These header items use row 1, leaving row 0 blank to avoid top-edge clipping; messages use row 3.
+DisplayPort positions use whole character cells, so fractional-row adjustments are unavailable.
+Airspeed sits to the left of the centred horizon, altitude to the right, and ground speed below airspeed with two blank rows between them.
+INAV mode prefixes airspeed with its dedicated airspeed icon; Betaflight mode uses `AS`.
 Throttle sits in the bottom-left corner with its throttle glyph.
-Battery percentage, consumed capacity and current form a centered group on the second-to-last row, in that order.
+Battery percentage, consumed capacity and current occupy fixed slots on row 18, in that order.
 A battery glyph immediately precedes the percentage, with its fill level following the reported charge; unavailable charge shows an empty outline with `--%`.
-The group recenters when individual fields are disabled.
-Compensated pack and average cell voltage are combined below it as `C 16.0V/4.00V`, centered on the bottom row.
-Measured voltages remain selectable: they use the row above the battery group when compensated voltage is enabled, or the bottom voltage row otherwise.
-The SAT/RC group at bottom right shares the last two rows, with RC aligned to the voltages and throttle; optional watts sit above throttle.
-On the compact canvas, the battery group uses row 12 (zero-based), with voltages below it and optional measured voltage on row 9 when both pairs are selected.
-If watts are enabled on the compact canvas, the bottom voltage pair shifts right to leave room for them.
-Pitch, roll, vertical speed, latitude and longitude are disabled in the default mask but remain selectable. Additional telemetry occupies the lower rows and right edge. The 50 × 18 canvas uses the same arrangement; narrower canvases use a compact layout.
-For the standard canvas sizes, the driver sends the matching DisplayPort resolution option. Arbitrary negotiated dimensions are respected without overriding them with a different standard profile.
-Field coordinates are predefined rather than individually configurable.
-`OSD_CH_HEIGHT` moves the crosshair vertically within the horizon area; positive values move it down.
+Compensated pack and average cell voltage sit below this group as `C 16.0V/4.00V` on row 19.
+Measured voltages remain selectable on row 17.
+Satellite count and RC RSSI sit at bottom right on rows 18 and 19; optional watts sit above throttle on row 17.
+Pitch, roll, vertical speed, latitude and longitude are disabled in the default mask but remain selectable.
+Coordinates stay fixed when readings, enabled items or canvas dimensions change.
+For a different canvas, adjust the position parameters to fit; fields outside the canvas are clipped.
+For 30 × 16, 50 × 18 and 60 × 22, the driver sends the matching DisplayPort resolution option.
+The 53 × 20 canvas and other negotiated dimensions are respected without sending a conflicting standard resolution option.
+Use `OSD_POS_CROSS_X` and `OSD_POS_CROSS_Y` to position the crosshair centre.
 
 For a fixed camera aligned with the aircraft's body X axis, leave `OSD_CAM_PITCH=0`.
 A positive mounting pitch points the camera upward relative to body X.
@@ -115,6 +122,71 @@ The font maps are documented in the [Betaflight glyph reference](https://betafli
 Select a matching font in the display when available, and verify glyphs and horizon orientation on the bench.
 Static horizon sidebars are enabled by default, with airspeed beside the left bar and altitude beside the right bar; scrolling speed/altitude tapes are not implemented.
 A received canvas announcement or successful UART write does not confirm that a display renders these glyphs correctly.
+
+### Item Positions
+
+Every implemented display item has separate X and Y parameters in the **OSD Layout** group in *QGroundControl*.
+All position parameters use the `OSD_POS_` prefix, followed by the item identifier and `_X` or `_Y`.
+`SBAR` identifies the sidebar pair and `BATPCT` identifies battery percentage, keeping names within the 16-character parameter limit.
+Positions apply while the driver is running, normally within about one second; no restart or firmware rebuild is needed after installing firmware with these parameters.
+`OSD_SYMBOLS` continues to control which items are enabled.
+
+- X is the column, increasing to the right; Y is the row, increasing downward.
+- Coordinates start at zero in the top-left corner. For 53 × 20, use X `0`–`52` and Y `0`–`19`.
+- Each parameter defaults to its explicit coordinate in the 53 × 20 layout shown below. There is no automatic position value.
+- X anchors the first character or icon. The horizon, sidebars and crosshair use their centre instead.
+- Parameter limits extend to X `59` and Y `21` for larger canvases. Content outside the active canvas is clipped; overlapping fields are not automatically rearranged.
+
+| Item | X Parameter | Y Parameter | Default X | Default Y |
+| ---- | ----------- | ----------- | --------- | --------- |
+| Arming state | `OSD_POS_ARM_X` | `OSD_POS_ARM_Y` | 18 | 1 |
+| Latitude | `OSD_POS_LAT_X` | `OSD_POS_LAT_Y` | 1 | 15 |
+| Longitude | `OSD_POS_LON_X` | `OSD_POS_LON_Y` | 28 | 15 |
+| Satellite count | `OSD_POS_SATS_X` | `OSD_POS_SATS_Y` | 46 | 18 |
+| Ground speed | `OSD_POS_GSPD_X` | `OSD_POS_GSPD_Y` | 11 | 9 |
+| Home icon and distance | `OSD_POS_HDIST_X` | `OSD_POS_HDIST_Y` | 22 | 1 |
+| Home direction arrow | `OSD_POS_HDIR_X` | `OSD_POS_HDIR_Y` | 23 | 1 |
+| Measured pack voltage | `OSD_POS_VOLT_X` | `OSD_POS_VOLT_Y` | 21 | 17 |
+| Current | `OSD_POS_CURR_X` | `OSD_POS_CURR_Y` | 32 | 18 |
+| Consumed capacity | `OSD_POS_MAH_X` | `OSD_POS_MAH_Y` | 24 | 18 |
+| RC RSSI | `OSD_POS_RSSI_X` | `OSD_POS_RSSI_Y` | 46 | 19 |
+| Altitude above home | `OSD_POS_ALT_X` | `OSD_POS_ALT_Y` | 34 | 6 |
+| Vertical speed | `OSD_POS_VSPD_X` | `OSD_POS_VSPD_Y` | 41 | 11 |
+| Flight mode | `OSD_POS_MODE_X` | `OSD_POS_MODE_Y` | 1 | 1 |
+| Pitch angle | `OSD_POS_PITCH_X` | `OSD_POS_PITCH_Y` | 1 | 14 |
+| Roll angle | `OSD_POS_ROLL_X` | `OSD_POS_ROLL_Y` | 39 | 14 |
+| Crosshair centre | `OSD_POS_CROSS_X` | `OSD_POS_CROSS_Y` | 26 | 7 |
+| Measured average cell voltage | `OSD_POS_CELL_X` | `OSD_POS_CELL_Y` | 27 | 17 |
+| Sidebar pair centre | `OSD_POS_SBAR_X` | `OSD_POS_SBAR_Y` | 26 | 7 |
+| Electrical power | `OSD_POS_POWER_X` | `OSD_POS_POWER_Y` | 1 | 17 |
+| Flight time | `OSD_POS_TIME_X` | `OSD_POS_TIME_Y` | 42 | 1 |
+| Airspeed | `OSD_POS_ASPD_X` | `OSD_POS_ASPD_Y` | 11 | 6 |
+| Artificial horizon centre | `OSD_POS_HORIZ_X` | `OSD_POS_HORIZ_Y` | 26 | 7 |
+| Messages | `OSD_POS_MSG_X` | `OSD_POS_MSG_Y` | 1 | 3 |
+| Throttle | `OSD_POS_THR_X` | `OSD_POS_THR_Y` | 1 | 19 |
+| Compensated pack voltage | `OSD_POS_CVOLT_X` | `OSD_POS_CVOLT_Y` | 20 | 19 |
+| Compensated average cell voltage | `OSD_POS_CCELL_X` | `OSD_POS_CCELL_Y` | 28 | 19 |
+| Battery percentage and icon | `OSD_POS_BATPCT_X` | `OSD_POS_BATPCT_Y` | 16 | 18 |
+
+The sidebar pair moves as one item; speed and altitude positions remain independently adjustable.
+Arming state, home arrow and battery fields each keep their own coordinates when other items move or are disabled.
+Pack and average cell voltage retain their `V/V` presentation when both are enabled on the same row and the cell field leaves enough space for the pack field.
+The separator occupies the cell field's preceding column; each number starts at its own X coordinate.
+Otherwise the two fields render separately, each with its own `V` and, for compensated values, `C` marker.
+
+For example, these MAVLink Console commands select 53 × 20 and place airspeed and ground speed at column 2, with two blank rows between them:
+
+```sh
+param set OSD_CANVAS 4
+param set OSD_POS_ASPD_X 2
+param set OSD_POS_ASPD_Y 6
+param set OSD_POS_GSPD_X 2
+param set OSD_POS_GSPD_Y 9
+```
+
+Reset an item's position parameters in *QGroundControl* to restore the coordinates in the table.
+For example, `param reset OSD_POS_ASPD_X` restores column 11 and `param reset OSD_POS_ASPD_Y` restores row 6.
+Earlier saved negative position values are reset to the new fixed defaults when the OSD runs; valid custom coordinates are preserved.
 
 ### Hardware Setup
 
@@ -210,7 +282,7 @@ In *QGroundControl*, set the following and reboot:
 | `OSD_SYMBOLS`      | `1070882546` (compensated voltages, percentage and sidebars) |
 | `OSD_UNITS`        | `1` (imperial; choose `0` for metric)     |
 | `OSD_FONT`         | `1` (INAV glyph map for Goggles N3)      |
-| `OSD_CANVAS`       | `0` (auto; 60 × 22 fallback)             |
+| `OSD_CANVAS`       | `4` (fixed 53 × 20; `0` also falls back to 53 × 20) |
 | `OSD_LOG_LEVEL`    | `6` (include INFO/autotune progress)      |
 | `OSD_CAM_PITCH`    | `0` if the camera is aligned with body X |
 | `OSD_CAM_VFOV`     | `60` initially; match the video mode     |
@@ -227,7 +299,7 @@ Building the driver does not change saved port assignments: `MSP_OSD_CONFIG` def
 Activate, update and link the O4 Air Unit and Goggles N3 using DJI's setup procedure.
 Enable the goggles' OSD/Canvas Mode display and select a matching HD canvas/font if those settings are offered by the installed goggles firmware.
 DJI's Betaflight CLI examples configure Betaflight, so use the PX4 parameters above instead.
-PX4 generates the fixed layout itself; it cannot be edited with Betaflight Configurator.
+PX4 generates the layout itself; edit its numerical X/Y parameters in *QGroundControl*, not Betaflight Configurator.
 DJI documents Canvas Mode, but does not list PX4 as a supported flight-controller firmware; verify this combination on the bench.
 
 With propellers removed and cooling airflow over the powered air unit, check the following in the MAVLink Console:
@@ -257,8 +329,8 @@ ctest --test-dir build/px4_sitl_test --output-on-failure -R '^(unit-(MspV1|Displ
 python3 src/drivers/osd/msp_osd/test_displayport.py build/px4_sitl_test
 ```
 
-The C++ tests exercise telemetry validity, timer/message state, rendering, serial packet handling, the published compensation filter and partially charged battery initialization.
-The PTY test runs the SITL driver and inspects its emitted MSP/DisplayPort packets.
+The C++ tests exercise telemetry validity, timer/message state, rendering, per-item placement and clipping, serial packet handling, the published compensation filter and partially charged battery initialization.
+The PTY test runs the SITL driver and inspects its emitted MSP/DisplayPort packets, including live position changes and 53 × 20 canvas selection.
 These checks do not replace testing the O4/N3 font, canvas and video projection on actual hardware.
 
 ### Worked Examples

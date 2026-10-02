@@ -83,8 +83,8 @@ void OsdTelemetryCore::update(uint64_t now, const Samples &s, const Settings &se
 	if (fresh(now, s.airspeed.timestamp, SECOND_US)
 	    && s.airspeed.airspeed_source >= airspeed_validated_s::SOURCE_GROUND_MINUS_WIND
 	    && s.airspeed.airspeed_source <= airspeed_validated_s::SOURCE_SYNTHETIC
-	    && std::isfinite(s.airspeed.indicated_airspeed_m_s) && s.airspeed.indicated_airspeed_m_s >= 0.f) {
-		_data.airspeed_m_s = s.airspeed.indicated_airspeed_m_s;
+	    && std::isfinite(s.airspeed.calibrated_airspeed_m_s) && s.airspeed.calibrated_airspeed_m_s >= 0.f) {
+		_data.airspeed_m_s = s.airspeed.calibrated_airspeed_m_s;
 		_data.airspeed_estimated = s.airspeed.airspeed_source == airspeed_validated_s::SOURCE_GROUND_MINUS_WIND
 					   || s.airspeed.airspeed_source == airspeed_validated_s::SOURCE_SYNTHETIC;
 	}

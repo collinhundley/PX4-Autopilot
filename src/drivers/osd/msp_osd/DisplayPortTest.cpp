@@ -3,6 +3,7 @@
 #include "DisplayPort.hpp"
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <limits>
@@ -143,26 +144,27 @@ TEST(DisplayPort, AllRequestedItemsAndUnits)
 	settings.symbols = ALL_SYMBOLS;
 	ASSERT_TRUE(display.render(sample(), settings));
 	EXPECT_TRUE(capture.valid);
-	EXPECT_EQ(capture.line(0).substr(1, 15), "POSITION FW ARM");
-	EXPECT_EQ(capture.screen[0][26], 0x11);
-	EXPECT_EQ(capture.line(0).substr(29, 5), "3281\x0f");
-	EXPECT_EQ(capture.line(0).substr(52, 7), "\x9c 01:05");
-	EXPECT_EQ(capture.line(2).substr(1, 14), "AUTOTUNE: ROLL");
-	EXPECT_EQ(capture.line(10).substr(16, 7), "\x70 22.4\x9d");
-	EXPECT_EQ(capture.line(8).substr(13, 10), std::string(10, ' '));
-	EXPECT_EQ(capture.line(9).substr(13, 10), std::string(10, ' '));
-	EXPECT_EQ(capture.line(7).substr(18, 5), "44.7\x9d");
-	EXPECT_EQ(capture.line(7).substr(38, 4), "328\x0f");
-	EXPECT_EQ(capture.line(21).substr(1, 5), "\x04 50%");
-	EXPECT_NE(capture.line(21).find("C 25.2V/4.20V"), std::string::npos);
-	EXPECT_NE(capture.line(19).find("24.4V/4.07V"), std::string::npos);
-	EXPECT_EQ(capture.line(20).substr(19, 21), "\x93 42%   1234\x07   12.3\x9a");
-	EXPECT_EQ(capture.screen[0][27], 0x68);
+	EXPECT_EQ(capture.line(1).substr(1, 11), "POSITION FW");
+	EXPECT_EQ(capture.line(1).substr(18, 3), "ARM");
+	EXPECT_EQ(capture.screen[1][22], 0x11);
+	EXPECT_EQ(capture.screen[1][23], 0x68);
+	EXPECT_EQ(capture.line(1).substr(25, 5), "3281\x0f");
+	EXPECT_EQ(capture.line(1).substr(42, 7), "\x9c 01:05");
+	EXPECT_EQ(capture.line(3).substr(1, 14), "AUTOTUNE: ROLL");
+	EXPECT_EQ(capture.line(9).substr(11, 7), "\x70 22.4\x9d");
+	EXPECT_EQ(capture.line(7).substr(11, 8), std::string(8, ' '));
+	EXPECT_EQ(capture.line(8).substr(11, 8), std::string(8, ' '));
+	EXPECT_EQ(capture.line(6).substr(11, 8), "AS 44.7\x9d");
+	EXPECT_EQ(capture.line(6).substr(34, 4), "328\x0f");
+	EXPECT_EQ(capture.line(19).substr(1, 5), "\x04 50%");
+	EXPECT_EQ(capture.line(19).substr(20, 13), "C 25.2V/4.20V");
+	EXPECT_EQ(capture.line(17).substr(21, 11), "24.4V/4.07V");
+	EXPECT_EQ(capture.line(18).substr(16, 21), "\x93 42%   1234\x07   12.3\x9a");
 	settings.imperial = false;
 	ASSERT_TRUE(display.render(sample(), settings));
-	EXPECT_EQ(capture.line(10).substr(16, 7), "\x70 10.0\x9f");
-	EXPECT_EQ(capture.line(7).substr(18, 5), "20.0\x9f");
-	EXPECT_EQ(capture.line(7).substr(38, 4), "100\x0c");
+	EXPECT_EQ(capture.line(9).substr(11, 7), "\x70 10.0\x9f");
+	EXPECT_EQ(capture.line(6).substr(11, 8), "AS 20.0\x9f");
+	EXPECT_EQ(capture.line(6).substr(34, 4), "100\x0c");
 }
 
 TEST(DisplayPort, MaskBitsAreIndependent)
@@ -173,6 +175,8 @@ TEST(DisplayPort, MaskBitsAreIndependent)
 		Capture capture;
 		DisplayPort display(Capture::write, &capture);
 		DisplaySettings settings;
+		settings.columns = 60;
+		settings.rows = 22;
 		settings.symbols = 1u << bit;
 		ASSERT_TRUE(display.render(data, settings)) << bit;
 		ASSERT_TRUE(capture.valid) << bit;
@@ -184,21 +188,21 @@ TEST(DisplayPort, MaskBitsAreIndependent)
 			EXPECT_GT(capture.writes(), 0u) << bit;
 		}
 
-		if (bit != MESSAGES) { EXPECT_EQ(capture.line(2).find("AUTOTUNE"), std::string::npos) << bit; }
+		if (bit != MESSAGES) { EXPECT_EQ(capture.line(3).find("AUTOTUNE"), std::string::npos) << bit; }
 
-		if (bit != CURRENT_DRAW) { EXPECT_EQ(capture.line(20).find("12.3\x9a"), std::string::npos) << bit; }
+		if (bit != CURRENT_DRAW) { EXPECT_EQ(capture.line(18).find("12.3\x9a"), std::string::npos) << bit; }
 
-		if (bit != FLYMODE) { EXPECT_EQ(capture.line(0).find("POSITION"), std::string::npos) << bit; }
+		if (bit != FLYMODE) { EXPECT_EQ(capture.line(1).find("POSITION"), std::string::npos) << bit; }
 
-		if (bit == MAIN_BATT_VOLTAGE) { EXPECT_EQ(capture.line(21).substr(27, 5), "24.4V"); }
+		if (bit == MAIN_BATT_VOLTAGE) { EXPECT_EQ(capture.line(17).substr(21, 5), "24.4V"); }
 
-		if (bit == AVG_CELL_VOLTAGE) { EXPECT_EQ(capture.line(21).substr(27, 5), "4.07V"); }
+		if (bit == AVG_CELL_VOLTAGE) { EXPECT_EQ(capture.line(17).substr(27, 5), "4.07V"); }
 
-		if (bit == BATT_COMP_VOLTAGE) { EXPECT_NE(capture.line(21).find("C 25.2V"), std::string::npos); }
+		if (bit == BATT_COMP_VOLTAGE) { EXPECT_NE(capture.line(19).find("C 25.2V"), std::string::npos); }
 
-		if (bit == BATT_CELL_COMP_VOLTAGE) { EXPECT_NE(capture.line(21).find("C 4.20V"), std::string::npos); }
+		if (bit == BATT_CELL_COMP_VOLTAGE) { EXPECT_NE(capture.line(19).find("C 4.20V"), std::string::npos); }
 
-		if (bit == BATT_PERC) { EXPECT_NE(capture.line(20).find("\x93 42%"), std::string::npos); }
+		if (bit == BATT_PERC) { EXPECT_NE(capture.line(18).find("\x93 42%"), std::string::npos); }
 	}
 }
 
@@ -207,6 +211,8 @@ TEST(DisplayPort, FrameOrderingAndDisableRelease)
 	Capture capture;
 	DisplayPort display(Capture::write, &capture);
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = 1u << FLIGHT_TIME;
 	ASSERT_TRUE(display.render(sample(), settings));
 	ASSERT_EQ(capture.packets.size(), 5u);
@@ -231,6 +237,8 @@ TEST(DisplayPort, StopsOnTransportFailureWithoutDrawingPartialFrame)
 	capture.fail_after = 3;
 	DisplayPort display(Capture::write, &capture);
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = ALL_SYMBOLS;
 	EXPECT_FALSE(display.render(sample(), settings));
 	ASSERT_EQ(capture.packets.size(), 3u);
@@ -242,7 +250,7 @@ TEST(DisplayPort, StopsOnTransportFailureWithoutDrawingPartialFrame)
 	EXPECT_EQ(capture.packets.back()[0], 4);
 }
 
-TEST(DisplayPort, CompactCanvasPreservesAllRequestedItems)
+TEST(DisplayPort, CompactCanvasAcceptsExplicitPositions)
 {
 	Capture capture;
 	capture.columns = 30;
@@ -251,32 +259,39 @@ TEST(DisplayPort, CompactCanvasPreservesAllRequestedItems)
 	DisplaySettings settings;
 	settings.columns = 30;
 	settings.rows = 16;
-	settings.symbols = ALL_SYMBOLS;
+	settings.symbols = (1u << AIRSPEED) | (1u << GPS_SPEED) | (1u << ALTITUDE) | (1u << FLIGHT_TIME)
+			   | (1u << BATT_PERC) | (1u << MAH_DRAWN) | (1u << CURRENT_DRAW) | (1u << THROTTLE);
+	settings.positions[AIRSPEED] = {0, 5};
+	settings.positions[GPS_SPEED] = {0, 8};
+	settings.positions[ALTITUDE] = {23, 5};
+	settings.positions[FLIGHT_TIME] = {19, 1};
+	settings.positions[BATT_PERC] = {2, 12};
+	settings.positions[MAH_DRAWN] = {11, 12};
+	settings.positions[CURRENT_DRAW] = {21, 12};
+	settings.positions[THROTTLE] = {0, 15};
 	ASSERT_TRUE(display.render(sample(), settings));
 	ASSERT_TRUE(capture.valid);
-	EXPECT_NE(capture.line(0).find("POSITION FW ARM"), std::string::npos);
-	EXPECT_NE(capture.line(0).find("\x9c 01:05"), std::string::npos);
-	EXPECT_NE(capture.line(1).find("3281\x0f"), std::string::npos);
-	EXPECT_NE(capture.line(2).find("AUTOTUNE: ROLL"), std::string::npos);
-	EXPECT_NE(capture.line(8).find("\x70 22.4\x9d"), std::string::npos);
-	EXPECT_NE(capture.line(5).find("44.7\x9d"), std::string::npos);
-	EXPECT_NE(capture.line(5).find("328\x0f"), std::string::npos);
+	EXPECT_EQ(capture.line(1).substr(19, 7), "\x9c 01:05");
+	EXPECT_EQ(capture.line(5).substr(0, 8), "AS 44.7\x9d");
+	EXPECT_EQ(capture.line(5).substr(23, 4), "328\x0f");
+	EXPECT_EQ(capture.line(8).substr(0, 7), "\x70 22.4\x9d");
+	EXPECT_EQ(capture.line(12).substr(2, 5), "\x93 42%");
+	EXPECT_EQ(capture.line(12).substr(11, 5), "1234\x07");
+	EXPECT_EQ(capture.line(12).substr(21, 5), "12.3\x9a");
 	EXPECT_EQ(capture.line(15).substr(0, 5), "\x04 50%");
-	EXPECT_NE(capture.line(13).find("C 25.2V/4.20V"), std::string::npos);
-	EXPECT_NE(capture.line(9).find("24.4V/4.07V"), std::string::npos);
-	EXPECT_NE(capture.line(12).find("12.3\x9a"), std::string::npos);
-	EXPECT_NE(capture.line(12).find("1234\x07"), std::string::npos);
 }
 
-TEST(DisplayPort, InvalidCanvasAndExtremeCrosshairOffsetAreBounded)
+TEST(DisplayPort, InvalidCanvasAndExtremePositionsAreBounded)
 {
 	for (uint8_t size : {0, 1, 15, 29, 255}) {
 		Capture capture;
 		DisplayPort display(Capture::write, &capture);
 		DisplaySettings settings;
+		settings.columns = 60;
+		settings.rows = 22;
 		settings.columns = size;
 		settings.rows = size;
-		settings.crosshair_offset = std::numeric_limits<int>::max();
+		settings.positions[CROSSHAIRS] = {59, 21};
 		settings.symbols = ALL_SYMBOLS;
 		ASSERT_TRUE(display.render(sample(), settings));
 		EXPECT_TRUE(capture.valid);
@@ -297,13 +312,15 @@ TEST(DisplayPort, InvalidNumbersShowUnavailable)
 	data.throttle_percent = 101.f;
 	data.latitude_deg = 91.0;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_NE(capture.line(10).find("\x70 --\x9d"), std::string::npos);
-	EXPECT_NE(capture.line(20).find("--\x07"), std::string::npos);
-	EXPECT_NE(capture.line(20).find("--\x9a"), std::string::npos);
-	EXPECT_NE(capture.line(21).find("--%"), std::string::npos);
-	EXPECT_NE(capture.line(21).find("--V/--V"), std::string::npos);
-	EXPECT_NE(capture.line(17).find("LAT --"), std::string::npos);
-	EXPECT_NE(capture.line(11).find("HORIZON --"), std::string::npos);
+	EXPECT_EQ(capture.line(9).substr(11, 6), "\x70 0.0\x9d");
+	EXPECT_EQ(capture.line(18).substr(24, 3), "--\x07");
+	EXPECT_EQ(capture.line(18).substr(32, 3), "--\x9a");
+	EXPECT_EQ(capture.line(19).substr(1, 5), "\x04 --%");
+	EXPECT_EQ(capture.line(17).substr(21, 3), "--V");
+	EXPECT_EQ(capture.screen[17][26], '/');
+	EXPECT_EQ(capture.line(17).substr(27, 3), "--V");
+	EXPECT_EQ(capture.line(15).substr(1, 6), "LAT --");
+	EXPECT_NE(capture.line(10).find("HORIZON --"), std::string::npos);
 
 	for (unsigned row = 0; row < 22; ++row) {
 		EXPECT_EQ(capture.line(row).find("NAN"), std::string::npos);
@@ -316,11 +333,13 @@ TEST(DisplayPort, NumericOverflowDoesNotTruncateToMisleadingValue)
 	Capture capture;
 	DisplayPort display(Capture::write, &capture);
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = (1u << MAH_DRAWN) | (1u << CURRENT_DRAW);
 	OsdData data = sample();
 	data.discharged_mah = 1e9f;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(20).substr(24, 11), "--\x07   12.3\x9a");
+	EXPECT_EQ(capture.line(18).substr(24, 13), "--\x07     12.3\x9a");
 }
 
 TEST(DisplayPort, FlightTimerBoundaries)
@@ -330,13 +349,15 @@ TEST(DisplayPort, FlightTimerBoundaries)
 	Capture capture;
 	DisplayPort display(Capture::write, &capture);
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = 1u << FLIGHT_TIME;
 	OsdData data = sample();
 
 	for (unsigned i = 0; i < sizeof(seconds) / sizeof(seconds[0]); ++i) {
 		data.flight_seconds = seconds[i];
 		ASSERT_TRUE(display.render(data, settings));
-		EXPECT_EQ(capture.line(0).substr(59 - strlen(expected[i]), strlen(expected[i])), expected[i]);
+		EXPECT_EQ(capture.line(1).substr(42, strlen(expected[i])), expected[i]);
 	}
 }
 
@@ -345,6 +366,8 @@ TEST(DisplayPort, TextIsBoundedAndCompatibleWithBetaflightGlyphs)
 	Capture capture;
 	DisplayPort display(Capture::write, &capture);
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = (1u << MESSAGES) | (1u << FLYMODE) | (1u << AIRSPEED);
 	OsdData data = sample();
 	memset(data.message, 'a', sizeof(data.message)); // Deliberately unterminated input.
@@ -352,17 +375,17 @@ TEST(DisplayPort, TextIsBoundedAndCompatibleWithBetaflightGlyphs)
 	data.airspeed_estimated = true;
 	ASSERT_TRUE(display.render(data, settings));
 	EXPECT_TRUE(capture.valid);
-	EXPECT_EQ(capture.line(2).substr(1, 30), std::string(30, 'A'));
-	EXPECT_EQ(capture.line(0).substr(1, 24), std::string(24, 'B'));
-	EXPECT_EQ(capture.line(7).substr(17, 1), "*");
+	EXPECT_EQ(capture.line(3).substr(1, 30), std::string(30, 'A'));
+	EXPECT_EQ(capture.line(1).substr(1, 16), std::string(16, 'B'));
+	EXPECT_EQ(capture.line(6).substr(13, 1), "*");
 	data.message[0] = '\n';
 	data.message[1] = static_cast<char>(0x90);
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(2).substr(1, 2), "??");
+	EXPECT_EQ(capture.line(3).substr(1, 2), "??");
 	settings.inav_font = true;
 	strcpy(data.message, "test \"$'?\n");
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(2).substr(1, 10), "TEST -----");
+	EXPECT_EQ(capture.line(3).substr(1, 10), "TEST -----");
 }
 
 TEST(DisplayPort, HomeArrowUsesCameraHeadingAndWraps)
@@ -370,6 +393,8 @@ TEST(DisplayPort, HomeArrowUsesCameraHeadingAndWraps)
 	Capture capture;
 	DisplayPort display(Capture::write, &capture);
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = 1u << HOME_DIR;
 	OsdData data = sample();
 	const float bearings[] = {0.f, PI / 2.f, PI, -PI / 2.f, 2.f * PI};
@@ -378,19 +403,55 @@ TEST(DisplayPort, HomeArrowUsesCameraHeadingAndWraps)
 	for (unsigned i = 0; i < sizeof(bearings) / sizeof(bearings[0]); ++i) {
 		data.home_bearing_rad = bearings[i];
 		ASSERT_TRUE(display.render(data, settings));
-		EXPECT_EQ(capture.screen[0][27], glyphs[i]);
+		EXPECT_EQ(capture.screen[1][23], glyphs[i]);
 	}
 
 	attitude(data, 0.f, 0.f, 90.f);
 	data.home_bearing_rad = PI / 2.f;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.screen[0][27], 0x68);
+	EXPECT_EQ(capture.screen[1][23], 0x68);
 	attitude(data, 0.f, 90.f);
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.screen[0][27], '?');
+	EXPECT_EQ(capture.screen[1][23], 0x68);
 	settings.camera_pitch_deg = -90.f;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.screen[0][27], 0x64);
+	EXPECT_EQ(capture.screen[1][23], 0x64);
+}
+
+TEST(DisplayPort, HomeArrowFallsBackForwardAndRecoversInBothFonts)
+{
+	for (bool inav : {false, true}) {
+		Capture capture;
+		DisplayPort display(Capture::write, &capture);
+		DisplaySettings settings;
+		settings.symbols = 1u << HOME_DIR;
+		settings.inav_font = inav;
+		const uint16_t forward = inav ? 0x13c : 0x68;
+		OsdData data = sample();
+		attitude(data, 0.f, 0.f, 90.f); // Fallback follows the screen, independent of aircraft yaw.
+
+		for (float bearing : {NAN, INFINITY, -INFINITY}) {
+			data.home_bearing_rad = bearing;
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_EQ(capture.screen[1][23], forward);
+		}
+
+		data.home_bearing_rad = PI / 2.f;
+		attitude(data, 0.f, 90.f); // Camera heading is undefined when looking vertically.
+		ASSERT_TRUE(display.render(data, settings));
+		EXPECT_EQ(capture.screen[1][23], forward);
+		memset(data.attitude_q, 0, sizeof(data.attitude_q));
+		ASSERT_TRUE(display.render(data, settings));
+		EXPECT_EQ(capture.screen[1][23], forward);
+		data.attitude_q[0] = NAN;
+		ASSERT_TRUE(display.render(data, settings));
+		EXPECT_EQ(capture.screen[1][23], forward);
+
+		attitude(data, 0.f);
+		ASSERT_TRUE(display.render(data, settings));
+		EXPECT_EQ(capture.screen[1][23], inav ? 0x140 : 0x64); // Valid rightward home bearing resumes.
+		EXPECT_TRUE(capture.valid);
+	}
 }
 
 TEST(DisplayPort, HorizonLevelRollAndPitchDirection)
@@ -398,7 +459,10 @@ TEST(DisplayPort, HorizonLevelRollAndPitchDirection)
 	Capture capture;
 	DisplayPort display(Capture::write, &capture);
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = 1u << ARTIFICIAL_HORIZON;
+	settings.positions[ARTIFICIAL_HORIZON] = {30, 8};
 	OsdData data = sample();
 	ASSERT_TRUE(display.render(data, settings));
 
@@ -424,7 +488,10 @@ TEST(DisplayPort, HorizonVerticalInvertedAndOffscreen)
 	Capture capture;
 	DisplayPort display(Capture::write, &capture);
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = 1u << ARTIFICIAL_HORIZON;
+	settings.positions[ARTIFICIAL_HORIZON] = {30, 8};
 	OsdData data = sample();
 
 	for (float roll : {-90.f, 90.f}) {
@@ -454,7 +521,10 @@ TEST(DisplayPort, HorizonCameraMountAndInvalidQuaternion)
 	Capture capture;
 	DisplayPort display(Capture::write, &capture);
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = 1u << ARTIFICIAL_HORIZON;
+	settings.positions[ARTIFICIAL_HORIZON] = {30, 8};
 	settings.camera_pitch_deg = 5.f;
 	OsdData data = sample();
 	ASSERT_TRUE(display.render(data, settings));
@@ -473,6 +543,8 @@ TEST(DisplayPort, HorizonCameraMountAndInvalidQuaternion)
 TEST(DisplayPort, FullMaskWireBudgetAndClippingAcrossAttitudes)
 {
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = ALL_SYMBOLS;
 	OsdData data = sample();
 	memset(data.message, 'M', sizeof(data.message) - 1);
@@ -499,24 +571,24 @@ TEST(DisplayPort, InavUnitsAndExtendedGlyphPagesMatchN3Map)
 	settings.inav_font = true;
 	ASSERT_TRUE(display.render(sample(), settings));
 	ASSERT_TRUE(capture.valid);
-	EXPECT_EQ(capture.screen[0][26], 0x10); // home
-	EXPECT_EQ(capture.screen[0][27], 0x13c); // north arrow, page 1
-	EXPECT_EQ(capture.screen[0][33], 0x74); // home distance feet
-	EXPECT_EQ(capture.screen[0][52], 0x9f); // flight timer
-	EXPECT_EQ(capture.screen[7][16], 0x8c); // airspeed icon
-	EXPECT_EQ(capture.screen[10][16], 0x17); // ground speed with two blank rows below airspeed
-	EXPECT_EQ(capture.screen[21][1], 0x95); // throttle icon
-	EXPECT_EQ(capture.screen[7][22], 0x91); // mph
-	EXPECT_EQ(capture.screen[7][41], 0x78); // altitude feet
-	EXPECT_EQ(capture.screen[20][19], 0x66); // battery level, before percentage
-	EXPECT_EQ(capture.screen[20][31], 0x99); // mAh
-	EXPECT_EQ(capture.screen[20][39], 0x6a); // amps
-	EXPECT_EQ(capture.screen[8][25], 0x150); // horizon, page 1
-	EXPECT_EQ(capture.screen[8][30], 0x166); // reticle, page 1
+	EXPECT_EQ(capture.screen[1][22], 0x10); // home
+	EXPECT_EQ(capture.screen[1][23], 0x13c); // north arrow, page 1
+	EXPECT_EQ(capture.screen[1][29], 0x74); // home distance feet
+	EXPECT_EQ(capture.screen[1][42], 0x9f); // flight timer
+	EXPECT_EQ(capture.screen[6][11], 0x8c); // airspeed icon
+	EXPECT_EQ(capture.screen[9][11], 0x17); // ground speed
+	EXPECT_EQ(capture.screen[19][1], 0x95); // throttle icon
+	EXPECT_EQ(capture.screen[6][17], 0x91); // mph
+	EXPECT_EQ(capture.screen[6][37], 0x78); // altitude feet
+	EXPECT_EQ(capture.screen[18][16], 0x66); // battery level
+	EXPECT_EQ(capture.screen[18][28], 0x99); // mAh
+	EXPECT_EQ(capture.screen[18][36], 0x6a); // amps
+	EXPECT_EQ(capture.screen[7][21], 0x150); // horizon, page 1
+	EXPECT_EQ(capture.screen[7][26], 0x166); // reticle, page 1
 	settings.imperial = false;
 	ASSERT_TRUE(display.render(sample(), settings));
-	EXPECT_EQ(capture.screen[7][22], 0x8f); // m/s
-	EXPECT_EQ(capture.screen[7][41], 0x76); // altitude meters
+	EXPECT_EQ(capture.screen[6][17], 0x8f); // m/s
+	EXPECT_EQ(capture.screen[6][37], 0x76); // altitude meters
 }
 
 TEST(DisplayPort, InavHomeArrowsKeepAllCompassDirections)
@@ -524,6 +596,8 @@ TEST(DisplayPort, InavHomeArrowsKeepAllCompassDirections)
 	Capture capture;
 	DisplayPort display(Capture::write, &capture);
 	DisplaySettings settings;
+	settings.columns = 60;
+	settings.rows = 22;
 	settings.symbols = 1u << HOME_DIR;
 	settings.inav_font = true;
 	OsdData data = sample();
@@ -531,7 +605,7 @@ TEST(DisplayPort, InavHomeArrowsKeepAllCompassDirections)
 	for (int sector = 0; sector < 16; ++sector) {
 		data.home_bearing_rad = sector * PI / 8.f;
 		ASSERT_TRUE(display.render(data, settings));
-		EXPECT_EQ(capture.screen[0][27], 0x13c + sector);
+		EXPECT_EQ(capture.screen[1][23], 0x13c + sector);
 	}
 }
 
@@ -545,118 +619,97 @@ TEST(DisplayPort, CapacityChangesToAmpHoursWithoutLosingUnits)
 	OsdData data = sample();
 	data.discharged_mah = 9999.f;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(20).substr(27, 4), "9999");
-	EXPECT_EQ(capture.screen[20][31], 0x99);
+	EXPECT_EQ(capture.line(18).substr(24, 4), "9999");
+	EXPECT_EQ(capture.screen[18][28], 0x99);
 	data.discharged_mah = 10420.f;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(20).substr(27, 5), "10.42");
-	EXPECT_EQ(capture.screen[20][32], 0xd3);
+	EXPECT_EQ(capture.line(18).substr(24, 5), "10.42");
+	EXPECT_EQ(capture.screen[18][29], 0xd3);
 	settings.inav_font = false;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(20).substr(26, 7), "10.42AH"); // No standard Betaflight Ah glyph.
+	EXPECT_EQ(capture.line(18).substr(24, 7), "10.42AH"); // No standard Betaflight Ah glyph.
 	settings.symbols |= (1u << MAIN_BATT_VOLTAGE) | (1u << AVG_CELL_VOLTAGE);
-	settings.columns = capture.columns = 30;
-	settings.rows = capture.rows = 16;
-	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_EQ(capture.line(12).substr(11, 7), "10.42AH");
-	EXPECT_EQ(capture.line(13).substr(9, 11), "24.4V/4.07V");
 	data.battery_voltage = NAN;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_NE(capture.line(13).find("--V/4.07V"), std::string::npos);
+	EXPECT_EQ(capture.line(17).substr(21, 3), "--V");
+	EXPECT_EQ(capture.line(17).substr(27, 5), "4.07V");
 	data.cell_voltage = NAN;
 	data.discharged_mah = 1e8f;
 	ASSERT_TRUE(display.render(data, settings));
-	EXPECT_NE(capture.line(13).find("--V/--V"), std::string::npos);
-	EXPECT_NE(capture.line(12).find("--AH"), std::string::npos);
+	EXPECT_EQ(capture.line(17).substr(27, 3), "--V");
+	EXPECT_EQ(capture.line(18).substr(24, 4), "--AH");
 }
 
 TEST(DisplayPort, CompensatedVoltageAndPercentageDoNotOverwriteOtherBatteryFields)
 {
-	for (const auto canvas : {std::array<unsigned, 2> {60, 22}, {50, 18}, {30, 16}}) {
-		for (bool inav : {false, true}) {
-			Capture capture;
-			capture.columns = canvas[0];
-			capture.rows = canvas[1];
-			DisplayPort display(Capture::write, &capture);
-			DisplaySettings settings;
-			settings.columns = canvas[0];
-			settings.rows = canvas[1];
-			settings.inav_font = inav;
-			settings.symbols = ALL_SYMBOLS;
-			OsdData data = sample();
+	for (bool inav : {false, true}) {
+		Capture capture;
+		DisplayPort display(Capture::write, &capture);
+		DisplaySettings settings;
+		settings.inav_font = inav;
+		settings.symbols = ALL_SYMBOLS;
+		OsdData data = sample();
+		ASSERT_TRUE(display.render(data, settings));
+		EXPECT_TRUE(capture.valid);
+		EXPECT_EQ(capture.line(17).substr(21, 11), "24.4V/4.07V");
+		EXPECT_EQ(capture.line(19).substr(20, 13), "C 25.2V/4.20V");
+		EXPECT_EQ(capture.line(18).substr(18, 3), "42%");
+		EXPECT_EQ(capture.line(18).substr(24, 4), "1234");
+		EXPECT_EQ(capture.line(18).substr(32, 4), "12.3");
+		EXPECT_EQ(capture.line(17).substr(1, 4), "300W");
+		settings.symbols &= ~((1u << MAIN_BATT_VOLTAGE) | (1u << AVG_CELL_VOLTAGE));
+		ASSERT_TRUE(display.render(data, settings));
+		EXPECT_EQ(capture.line(19).substr(20, 13), "C 25.2V/4.20V");
+		EXPECT_EQ(capture.line(17).find("24.4V"), std::string::npos);
+		data.compensated_battery_voltage = NAN;
+		data.compensated_cell_voltage = NAN;
+		data.battery_remaining_percent = NAN;
+		ASSERT_TRUE(display.render(data, settings));
+		EXPECT_EQ(capture.line(19).substr(20, 5), "C --V");
+		EXPECT_EQ(capture.screen[19][27], '/');
+		EXPECT_EQ(capture.line(19).substr(28, 3), "--V");
+		EXPECT_EQ(capture.line(18).substr(18, 3), "--%");
+		data.battery_remaining_percent = 0.f;
+		ASSERT_TRUE(display.render(data, settings));
+		EXPECT_EQ(capture.line(18).substr(18, 2), "0%");
+	}
+}
+
+TEST(DisplayPort, BatteryPositionsRemainFixedAcrossValuesAndMasks)
+{
+	for (bool inav : {false, true}) {
+		Capture capture;
+		DisplayPort display(Capture::write, &capture);
+		DisplaySettings settings;
+		settings.inav_font = inav;
+		settings.symbols = (1u << BATT_PERC) | (1u << MAH_DRAWN) | (1u << CURRENT_DRAW);
+		OsdData data = sample();
+		ASSERT_TRUE(display.render(data, settings));
+		EXPECT_EQ(capture.screen[18][16], inav ? 0x66 : 0x93);
+		EXPECT_EQ(capture.line(18).substr(24, 4), "1234");
+		EXPECT_EQ(capture.line(18).substr(32, 4), "12.3");
+		settings.symbols = 1u << CURRENT_DRAW;
+		data.current_a = 0.f;
+		ASSERT_TRUE(display.render(data, settings));
+		EXPECT_EQ(capture.line(18).substr(32, 3), "0.0");
+		EXPECT_EQ(capture.line(18).substr(0, 32), std::string(32, ' '));
+		settings.symbols = 1u << BATT_PERC;
+		const float percentages[] = {0.f, 50.f, 100.f, NAN};
+		const int levels[] = {6, 3, 0, 6};
+		const char *labels[] = {" 0%", " 50%", " 100%", " --%"};
+
+		for (unsigned i = 0; i < 4; ++i) {
+			data.battery_remaining_percent = percentages[i];
 			ASSERT_TRUE(display.render(data, settings));
-			const bool hd = canvas[0] >= 50;
-			const unsigned measured_row = hd ? canvas[1] - 3 : 9;
-			const unsigned compensated_row = hd ? canvas[1] - 1 : 13;
-			const unsigned capacity_row = hd ? canvas[1] - 2 : 12;
-			EXPECT_TRUE(capture.valid);
-			EXPECT_NE(capture.line(measured_row).find("24.4V/4.07V"), std::string::npos);
-			EXPECT_NE(capture.line(compensated_row).find("C 25.2V/4.20V"), std::string::npos);
-			EXPECT_NE(capture.line(capacity_row).find("42%"), std::string::npos);
-			EXPECT_NE(capture.line(capacity_row).find("1234"), std::string::npos);
-			EXPECT_NE(capture.line(capacity_row).find("12.3"), std::string::npos);
-			EXPECT_NE(capture.line(hd ? canvas[1] - 3 : 13).find("300W"), std::string::npos);
-			settings.symbols &= ~((1u << MAIN_BATT_VOLTAGE) | (1u << AVG_CELL_VOLTAGE));
-			ASSERT_TRUE(display.render(data, settings));
-			EXPECT_NE(capture.line(compensated_row).find("C 25.2V/4.20V"), std::string::npos);
-			EXPECT_EQ(capture.line(measured_row).find("24.4V"), std::string::npos);
-			data.compensated_battery_voltage = NAN;
-			data.compensated_cell_voltage = NAN;
-			data.battery_remaining_percent = NAN;
-			ASSERT_TRUE(display.render(data, settings));
-			EXPECT_NE(capture.line(compensated_row).find("C --V/--V"), std::string::npos);
-			EXPECT_NE(capture.line(capacity_row).find("--%"), std::string::npos);
-			data.battery_remaining_percent = 0.f;
-			ASSERT_TRUE(display.render(data, settings));
-			EXPECT_NE(capture.line(capacity_row).find("0%"), std::string::npos);
+			EXPECT_EQ(capture.screen[18][16], (inav ? 0x63 : 0x90) + levels[i]);
+			EXPECT_EQ(capture.line(18).substr(17, strlen(labels[i])), labels[i]);
 		}
 	}
 }
 
-TEST(DisplayPort, BatteryGroupCentersEnabledFieldsAndUsesChargeGlyphs)
+TEST(DisplayPort, CanvasChangesClipWithoutRepositioningItems)
 {
-	for (const auto canvas : {std::array<unsigned, 2> {60, 22}, {50, 18}, {30, 16}}) {
-		for (bool inav : {false, true}) {
-			Capture capture;
-			capture.columns = canvas[0];
-			capture.rows = canvas[1];
-			DisplayPort display(Capture::write, &capture);
-			DisplaySettings settings;
-			settings.columns = canvas[0];
-			settings.rows = canvas[1];
-			settings.inav_font = inav;
-			const unsigned row = canvas[0] >= 50 ? canvas[1] - 2 : 12;
-			const std::string gap = canvas[0] >= 50 ? "   " : "  ";
-			OsdData data = sample();
-			const auto expect_centered = [&](const std::string & expected) {
-				const unsigned x = (canvas[0] - expected.size()) / 2;
-				EXPECT_EQ(capture.line(row).substr(0, canvas[0]), std::string(x, ' ') + expected +
-					  std::string(canvas[0] - x - expected.size(), ' '));
-			};
-			settings.symbols = (1u << BATT_PERC) | (1u << MAH_DRAWN) | (1u << CURRENT_DRAW);
-			ASSERT_TRUE(display.render(data, settings));
-			expect_centered(std::string(1, inav ? 0x66 : 0x93) + " 42%" + gap + "1234" +
-					std::string(1, inav ? 0x99 : 0x07) + gap + "12.3" + std::string(1, inav ? 0x6a : 0x9a));
-			settings.symbols = 1u << CURRENT_DRAW;
-			ASSERT_TRUE(display.render(data, settings));
-			expect_centered("12.3" + std::string(1, inav ? 0x6a : 0x9a));
-			settings.symbols = 1u << BATT_PERC;
-			const float percentages[] = {0.f, 50.f, 100.f, NAN};
-			const int levels[] = {6, 3, 0, 6};
-			const char *labels[] = {" 0%", " 50%", " 100%", " --%"};
-
-			for (unsigned i = 0; i < 4; ++i) {
-				data.battery_remaining_percent = percentages[i];
-				ASSERT_TRUE(display.render(data, settings));
-				expect_centered(std::string(1, (inav ? 0x63 : 0x90) + levels[i]) + labels[i]);
-			}
-		}
-	}
-}
-
-TEST(DisplayPort, WideLayoutUsesBothEdgesAndKeepsArmingNextToMode)
-{
-	for (const auto canvas : {std::array<unsigned, 2> {60, 22}, {50, 18}}) {
+	for (const auto canvas : {std::array<unsigned, 2> {60, 22}, {53, 20}, {50, 18}, {30, 16}}) {
 		Capture capture;
 		capture.columns = canvas[0];
 		capture.rows = canvas[1];
@@ -664,25 +717,164 @@ TEST(DisplayPort, WideLayoutUsesBothEdgesAndKeepsArmingNextToMode)
 		DisplaySettings settings;
 		settings.columns = canvas[0];
 		settings.rows = canvas[1];
-		settings.symbols = ALL_SYMBOLS;
+		settings.symbols = (1u << FLYMODE) | (1u << DISARMED) | (1u << FLIGHT_TIME) | (1u << CURRENT_DRAW);
 		OsdData data = sample();
+		memset(data.mode, 'M', sizeof(data.mode));
 		data.armed = false;
 		ASSERT_TRUE(display.render(data, settings));
 		EXPECT_TRUE(capture.valid);
-		EXPECT_EQ(capture.line(0).substr(1, 15), "POSITION FW DIS");
-		EXPECT_EQ(capture.screen[0][canvas[0] - 2], '5'); // Timer reaches the right margin.
-		EXPECT_EQ(capture.line(0).find("PX4"), std::string::npos);
-		EXPECT_NE(capture.line(canvas[1] - 2).find("1234\x07"), std::string::npos);
-		EXPECT_NE(capture.line(canvas[1] - 2).find("12.3\x9a"), std::string::npos);
-		EXPECT_NE(capture.line(canvas[1] - 2).find("SAT 18"), std::string::npos);
-		EXPECT_NE(capture.line(canvas[1] - 1).find("C 25.2V/4.20V"), std::string::npos);
-		EXPECT_NE(capture.line(canvas[1] - 1).find("RC 99%"), std::string::npos);
-		EXPECT_NE(capture.line(canvas[1] - 1).find("\x04 50%"), std::string::npos);
-		memset(data.mode, 'M', sizeof(data.mode));
+		EXPECT_EQ(capture.line(1).substr(1, 16), std::string(16, 'M'));
+		EXPECT_EQ(capture.line(1).substr(18, 3), "DIS");
+		EXPECT_EQ(capture.line(1).find("PX4"), std::string::npos);
+		EXPECT_EQ(capture.screen[1][42], canvas[0] > 42 ? 0x9c : ' ');
+		EXPECT_EQ(capture.line(18).substr(32, 4), canvas[1] > 18 ? "12.3" : "    ");
 		data.armed = true;
 		data.failsafe = true;
 		ASSERT_TRUE(display.render(data, settings));
-		EXPECT_NE(capture.line(0).find(" ARM!"), std::string::npos);
-		EXPECT_EQ(capture.screen[0][canvas[0] / 2 - 4], 0x11); // Long mode cannot overwrite home.
+		EXPECT_EQ(capture.line(1).substr(18, 4), "ARM!");
+	}
+}
+
+TEST(DisplayPort, DjiCanvasDefaultsFitAndLeaveTopRowClear)
+{
+	Capture capture;
+	capture.columns = 53;
+	capture.rows = 20;
+	DisplayPort display(Capture::write, &capture);
+	DisplaySettings settings;
+	settings.symbols = 1070882546u;
+	settings.inav_font = true;
+	ASSERT_EQ(settings.columns, 53);
+	ASSERT_EQ(settings.rows, 20);
+	ASSERT_TRUE(display.render(sample(), settings));
+	EXPECT_TRUE(capture.valid);
+	EXPECT_EQ(capture.line(0), std::string(60, ' '));
+	EXPECT_EQ(capture.line(1).substr(1, 11), "POSITION FW");
+	EXPECT_EQ(capture.line(1).substr(18, 3), "ARM");
+	EXPECT_EQ(capture.screen[1][22], 0x10); // Home icon.
+	EXPECT_EQ(capture.screen[1][48], '5'); // Flight timer stays inside the right edge.
+	EXPECT_NE(capture.line(3).find("AUTOTUNE: ROLL"), std::string::npos);
+	EXPECT_EQ(capture.screen[7][26], 0x166); // Reticle at the 53-column centre.
+	EXPECT_EQ(capture.screen[7][19], 0x131); // Left sidebar.
+	EXPECT_EQ(capture.screen[7][33], 0x131); // Right sidebar.
+	EXPECT_NE(capture.line(18).find("42%"), std::string::npos);
+	EXPECT_NE(capture.line(18).find("SAT 18"), std::string::npos);
+	EXPECT_NE(capture.line(19).find("C 25.2V/4.20V"), std::string::npos);
+	EXPECT_NE(capture.line(19).find("RC 99%"), std::string::npos);
+	EXPECT_EQ(capture.screen[19][1], 0x95); // Throttle reaches only the last valid row.
+
+	for (const auto &packet : capture.packets) {
+		EXPECT_NE(packet[0], 5); // No legacy resolution option can override the DJI grid.
+	}
+}
+
+TEST(DisplayPort, MissingAndInvalidSpeedsDisplayZeroWithoutChangingOtherFields)
+{
+	for (bool imperial : {false, true}) {
+		for (bool inav : {false, true}) {
+			Capture capture;
+			DisplayPort display(Capture::write, &capture);
+			DisplaySettings settings;
+			settings.symbols = (1u << AIRSPEED) | (1u << GPS_SPEED) | (1u << ALTITUDE);
+			settings.imperial = imperial;
+			settings.inav_font = inav;
+			OsdData data;
+
+			for (float value : {0.f, -0.f, -1.f, NAN, INFINITY, -INFINITY, std::numeric_limits<float>::max()}) {
+				data.airspeed_m_s = data.ground_speed_m_s = value;
+				ASSERT_TRUE(display.render(data, settings));
+				EXPECT_NE(capture.line(6).substr(9, 10).find("0.0"), std::string::npos);
+				EXPECT_NE(capture.line(9).substr(9, 10).find("0.0"), std::string::npos);
+				EXPECT_EQ(capture.line(6).substr(9, 10).find("--"), std::string::npos);
+				EXPECT_EQ(capture.line(9).substr(9, 10).find("--"), std::string::npos);
+				EXPECT_NE(capture.line(6).substr(34).find("--"), std::string::npos); // Altitude still unavailable.
+			}
+
+			data.airspeed_m_s = data.ground_speed_m_s = 0.5f;
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_NE(capture.line(6).substr(9, 10).find(imperial ? "1.1" : "0.5"), std::string::npos);
+			EXPECT_NE(capture.line(9).substr(9, 10).find(imperial ? "1.1" : "0.5"), std::string::npos);
+		}
+	}
+}
+
+TEST(DisplayPort, EveryImplementedItemHasIndependentXYPlacement)
+{
+	for (unsigned bit = 1; bit <= BATT_PERC; ++bit) {
+		if (bit == ESC_TMP) { continue; }
+
+		Capture capture;
+		capture.columns = 53;
+		capture.rows = 20;
+		DisplayPort display(Capture::write, &capture);
+		DisplaySettings settings;
+		settings.symbols = 1u << bit;
+		settings.positions[bit] = {10, 12};
+		ASSERT_TRUE(display.render(sample(), settings)) << bit;
+		ASSERT_TRUE(capture.valid) << bit;
+		int minimum_x = 60;
+		int minimum_y = 22;
+
+		for (const auto &packet : capture.packets) {
+			if (packet[0] != 3) { continue; }
+
+			minimum_x = std::min(minimum_x, static_cast<int>(packet[2]));
+			minimum_y = std::min(minimum_y, static_cast<int>(packet[1]));
+		}
+
+		const int left_extent = bit == HORIZON_SIDEBARS ? 7 : bit == ARTIFICIAL_HORIZON ? 5 : bit == CROSSHAIRS ? 1 : 0;
+		EXPECT_EQ(minimum_x, 10 - left_extent) << bit;
+		EXPECT_EQ(minimum_y, bit == HORIZON_SIDEBARS ? 9 : 12) << bit;
+	}
+}
+
+TEST(DisplayPort, LivePositionUpdatesAndExplicitDefaultsClearOldLocations)
+{
+	Capture capture;
+	DisplayPort display(Capture::write, &capture);
+	DisplaySettings settings;
+	settings.symbols = (1u << AIRSPEED) | (1u << CURRENT_DRAW) | (1u << BATT_COMP_VOLTAGE) | (1u << BATT_CELL_COMP_VOLTAGE);
+	settings.positions[AIRSPEED] = {2, 6};
+	settings.positions[CURRENT_DRAW] = {5, 4};
+	settings.positions[BATT_COMP_VOLTAGE] = {1, 15};
+	settings.positions[BATT_CELL_COMP_VOLTAGE] = {40, 16};
+	ASSERT_TRUE(display.render(sample(), settings));
+	EXPECT_EQ(capture.line(6).substr(2, 8), "AS 44.7\x9d");
+	EXPECT_EQ(capture.line(4).substr(5, 5), "12.3\x9a");
+	EXPECT_EQ(capture.line(15).substr(1, 7), "C 25.2V");
+	EXPECT_EQ(capture.line(16).substr(40, 7), "C 4.20V");
+	const DisplaySettings defaults;
+
+	for (auto item : {AIRSPEED, CURRENT_DRAW, BATT_COMP_VOLTAGE, BATT_CELL_COMP_VOLTAGE}) {
+		settings.positions[item] = defaults.positions[item];
+	}
+	ASSERT_TRUE(display.render(sample(), settings));
+	EXPECT_EQ(capture.line(4), std::string(60, ' '));
+	EXPECT_EQ(capture.line(6).substr(11, 8), "AS 44.7\x9d");
+	EXPECT_EQ(capture.line(18).substr(32, 5), "12.3\x9a");
+	EXPECT_EQ(capture.line(19).substr(20, 13), "C 25.2V/4.20V");
+}
+
+TEST(DisplayPort, OffscreenPositionsClipWithoutAbortingOtherItems)
+{
+	for (const auto canvas : {std::array<unsigned, 2> {53, 20}, {30, 16}}) {
+		for (unsigned bit = 1; bit <= BATT_PERC; ++bit) {
+			if (bit == ESC_TMP || bit == FLIGHT_TIME) { continue; }
+
+			Capture capture;
+			capture.columns = canvas[0];
+			capture.rows = canvas[1];
+			DisplayPort display(Capture::write, &capture);
+			DisplaySettings settings;
+			settings.columns = canvas[0];
+			settings.rows = canvas[1];
+			settings.symbols = (1u << bit) | (1u << FLIGHT_TIME);
+			settings.positions[bit] = {59, 21};
+			settings.positions[FLIGHT_TIME] = {1, 1};
+			ASSERT_TRUE(display.render(sample(), settings)) << bit;
+			ASSERT_TRUE(capture.valid) << bit;
+			EXPECT_NE(capture.line(1).find("01:05"), std::string::npos) << bit;
+			EXPECT_EQ(capture.packets.back()[0], 4) << bit;
+		}
 	}
 }

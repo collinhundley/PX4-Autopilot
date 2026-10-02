@@ -88,7 +88,7 @@ TEST_F(OsdTelemetryTest, ExtractsIndependentPhysicalQuantities)
 	EXPECT_FLOAT_EQ(data.battery_remaining_percent, 42.f);
 	EXPECT_FLOAT_EQ(data.current_a, 12.f);
 	EXPECT_FLOAT_EQ(data.discharged_mah, 400.f);
-	EXPECT_FLOAT_EQ(data.airspeed_m_s, 15.f);
+	EXPECT_FLOAT_EQ(data.airspeed_m_s, 17.f);
 	EXPECT_FALSE(data.airspeed_estimated);
 	EXPECT_FLOAT_EQ(data.ground_speed_m_s, 5.f);
 	EXPECT_FLOAT_EQ(data.altitude_m, 100.f);
@@ -208,7 +208,7 @@ TEST_F(OsdTelemetryTest, EstimatedAirspeedIsExplicitAndDisabledDoesNotBecomeGrou
 	samples.airspeed.airspeed_source = airspeed_validated_s::SOURCE_GROUND_MINUS_WIND;
 	update();
 	EXPECT_TRUE(core.data().airspeed_estimated);
-	EXPECT_FLOAT_EQ(core.data().airspeed_m_s, 15.f);
+	EXPECT_FLOAT_EQ(core.data().airspeed_m_s, 17.f);
 	samples.airspeed.airspeed_source = airspeed_validated_s::SOURCE_SYNTHETIC;
 	update();
 	EXPECT_TRUE(core.data().airspeed_estimated);
@@ -217,9 +217,33 @@ TEST_F(OsdTelemetryTest, EstimatedAirspeedIsExplicitAndDisabledDoesNotBecomeGrou
 	EXPECT_TRUE(std::isnan(core.data().airspeed_m_s));
 	EXPECT_FLOAT_EQ(core.data().ground_speed_m_s, 5.f);
 	samples.airspeed.airspeed_source = airspeed_validated_s::SOURCE_SENSOR_2;
-	samples.airspeed.indicated_airspeed_m_s = NAN;
+	samples.airspeed.calibrated_airspeed_m_s = NAN;
 	update();
 	EXPECT_TRUE(std::isnan(core.data().airspeed_m_s));
+}
+
+TEST_F(OsdTelemetryTest, CalibratedAirspeedDoesNotDependOnIndicatedAirspeed)
+{
+	// CAS is already calibrated by the airspeed selector; IAS validity does not
+	// determine whether the independently published CAS can be displayed.
+	samples.airspeed.indicated_airspeed_m_s = NAN;
+	update();
+	EXPECT_FLOAT_EQ(core.data().airspeed_m_s, 17.f);
+
+	samples.airspeed.indicated_airspeed_m_s = 15.f;
+	samples.airspeed.calibrated_airspeed_m_s = 0.f;
+	update();
+	EXPECT_FLOAT_EQ(core.data().airspeed_m_s, 0.f);
+
+	for (float value : {-1.f, NAN, INFINITY, -INFINITY}) {
+		samples.airspeed.calibrated_airspeed_m_s = value;
+		update();
+		EXPECT_TRUE(std::isnan(core.data().airspeed_m_s)); // No fallback to valid IAS.
+	}
+
+	samples.airspeed.calibrated_airspeed_m_s = 19.f;
+	update();
+	EXPECT_FLOAT_EQ(core.data().airspeed_m_s, 19.f);
 }
 
 TEST_F(OsdTelemetryTest, AltitudeNeverFallsBackToDifferentReference)

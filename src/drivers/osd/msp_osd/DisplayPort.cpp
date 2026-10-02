@@ -17,6 +17,7 @@ constexpr int MAX_TEXT = 30;
 constexpr int HORIZON_HALF_WIDTH = 5;
 // Betaflight page-0 glyph assignments: https://betaflight.com/docs/development/OSD-Glyps
 constexpr uint8_t ARROW_SOUTH = 0x60;
+constexpr uint8_t ARROW_FORWARD = ARROW_SOUTH + 8; // Zero bearing relative to the camera.
 constexpr uint8_t HORIZON_BAR = 0x80; // Nine horizontal strokes, from top to bottom within a cell.
 constexpr uint8_t SIDEBAR = 0x13;
 constexpr uint8_t BATTERY_FULL = 0x90;
@@ -34,7 +35,7 @@ bool finite_range(float value, float minimum, float maximum)
 	return std::isfinite(value) && value >= minimum && value <= maximum;
 }
 
-void format_number(char *buffer, size_t size, int width, const char *prefix, float value, int decimals,
+bool format_number(char *buffer, size_t size, int width, const char *prefix, float value, int decimals,
 		   const char *unit, float minimum, float maximum)
 {
 	int length = -1;
@@ -45,7 +46,10 @@ void format_number(char *buffer, size_t size, int width, const char *prefix, flo
 
 	if (length < 0 || length > width || length >= static_cast<int>(size)) {
 		snprintf(buffer, size, "%s--%s", prefix, unit);
+		return false;
 	}
+
+	return true;
 }
 }
 
@@ -203,7 +207,7 @@ bool DisplayPort::text(Position position, const char *value, size_t capacity)
 	return write(position.x, position.y, clean, length);
 }
 
-bool DisplayPort::formatted(Position position, const char *value, bool right_align)
+bool DisplayPort::formatted(Position position, const char *value)
 {
 	// Only trusted renderer-generated strings may contain glyph bytes. User text goes through text().
 	const size_t length = strnlen(value, MAX_TEXT);
@@ -212,16 +216,29 @@ bool DisplayPort::formatted(Position position, const char *value, bool right_ali
 		return false;
 	}
 
-	const int x = right_align ? position.x + position.width - static_cast<int>(length) : position.x;
-	return write(x, position.y, reinterpret_cast<const uint8_t *>(value), length);
+	return write(position.x, position.y, reinterpret_cast<const uint8_t *>(value), length);
 }
 
 bool DisplayPort::number(Position position, const char *prefix, float value, int decimals, const char *unit,
-			 float minimum, float maximum, bool right_align)
+			 float minimum, float maximum)
 {
 	char buffer[MAX_TEXT + 1];
 	format_number(buffer, sizeof(buffer), position.width, prefix, value, decimals, unit, minimum, maximum);
-	return formatted(position, buffer, right_align);
+	return formatted(position, buffer);
+}
+
+bool DisplayPort::speed(Position position, const char *prefix, float value, const char *unit)
+{
+	char buffer[MAX_TEXT + 1];
+
+	// Missing, stale and invalid speeds display as zero. Keep this policy local
+	// to the OSD; estimator validity and other unavailable fields are unchanged.
+	if (!format_number(buffer, sizeof(buffer), position.width, prefix, value > 0.f ? value : 0.f,
+			   1, unit, 0.f, 9999.f)) {
+		format_number(buffer, sizeof(buffer), position.width, prefix, 0.f, 1, unit, 0.f, 9999.f);
+	}
+
+	return formatted(position, buffer);
 }
 
 bool DisplayPort::camera_vectors(const OsdData &data, const DisplaySettings &settings, float down[3], float forward[2])
@@ -337,8 +354,8 @@ bool DisplayPort::horizon(const OsdData &data, const DisplaySettings &settings, 
 bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 {
 	// Reject corrupt negotiation rather than deriving negative coordinates or huge packets.
-	_columns = settings.columns >= 30 && settings.columns <= 60 ? settings.columns : 60;
-	_rows = settings.rows >= 16 && settings.rows <= 22 ? settings.rows : 22;
+	_columns = settings.columns >= 30 && settings.columns <= 60 ? settings.columns : 53;
+	_rows = settings.rows >= 16 && settings.rows <= 22 ? settings.rows : 20;
 	_inav_font = settings.inav_font;
 
 	if (settings.symbols == 0) {
@@ -361,16 +378,7 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 
 	if (!command(CLEAR)) { return false; }
 
-	const bool large = _columns >= 50 && _rows >= 18;
-	const int center_x = _columns / 2;
-	const int center_y = large ? (_rows * 8) / 22 : 6;
-	const int half_height = large ? 3 : 2;
-	const int instruments_y = center_y - 1;
-	const int ground_speed_y = instruments_y + 3; // Two blank rows between airspeed and ground speed.
-	const int vario_y = large ? (_rows * 13) / 22 : 10;
-	const int bottom_y = large ? _rows - 2 : _rows - 4;
-	const int home_x = large ? center_x - 4 : 0;
-	const int home_y = large ? 0 : 1;
+	const int half_height = _columns >= 50 && _rows >= 18 ? 3 : 2;
 	const float distance_scale = settings.imperial ? FEET_PER_METER : 1.f;
 	const float speed_scale = settings.imperial ? MPH_PER_M_S : 1.f;
 	const char *distance_unit = settings.imperial ? "\x0f" : "\x0c";
@@ -378,27 +386,22 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 	const char *speed_unit = settings.imperial ? "\x9d" : "\x9f";
 	const char *vario_unit = settings.imperial ? "\x99" : "\x9f";
 	const auto enabled = [&settings](SymbolIndex symbol) { return (settings.symbols & (1u << symbol)) != 0; };
-	const auto position = [large](Position hd, Position sd) { return large ? hd : sd; };
+	const auto position = [&settings](SymbolIndex item, int width) {
+		const ItemPosition &configured = settings.positions[item];
+		return Position {configured.x, configured.y, width};
+	};
 
-	// The former PX4-label bit stays reserved. Mode and state now share the top-left line.
-	const int left = large ? 1 : 0;
-	const int header_width = large ? center_x - 5 : _columns - 12;
+	// All items have explicit coordinates. The former PX4-label bit remains reserved.
 	const char *state = !data.status_valid ? "--" : data.armed ? (data.failsafe ? "ARM!" : "ARM") :
 			    (data.failsafe ? "DIS!" : "DIS");
-	const int state_length = enabled(DISARMED) ? strlen(state) : 0;
-	int state_x = left;
 
 	if (enabled(FLYMODE)) {
 		const char *mode = data.mode[0] ? data.mode : "MODE --";
-		const int mode_width = header_width - (state_length > 0 ? state_length + 1 : 0);
-		const int mode_length = strnlen(mode, sizeof(data.mode));
 
-		if (!text({left, 0, mode_width}, mode, sizeof(data.mode))) { return false; }
-
-		state_x += (mode_length < mode_width ? mode_length : mode_width) + 1;
+		if (!text(position(FLYMODE, 16), mode, sizeof(data.mode))) { return false; }
 	}
 
-	if (state_length > 0 && !text({state_x, 0, state_length}, state)) { return false; }
+	if (enabled(DISARMED) && !text(position(DISARMED, 4), state)) { return false; }
 
 	if (enabled(FLIGHT_TIME)) {
 		char buffer[MAX_TEXT + 1];
@@ -418,13 +421,16 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 			snprintf(buffer, sizeof(buffer), "\x9c >99H");
 		}
 
-		if (!formatted({_columns - 11, 0, 10}, buffer, true)) { return false; }
+		if (!formatted(position(FLIGHT_TIME, 10), buffer)) { return false; }
 	}
+
+	const Position home_position = position(HOME_DIST, 12);
 
 	if (enabled(HOME_DIR)) {
 		float down[3];
 		float forward[2];
-		uint8_t arrow = '?';
+		// Keep an arrow visible while home bearing or camera heading is unavailable.
+		uint8_t arrow = ARROW_FORWARD;
 
 		if (std::isfinite(data.home_bearing_rad) && camera_vectors(data, settings, down, forward)
 		    && forward[0] * forward[0] + forward[1] * forward[1] > 0.0025f) {
@@ -433,57 +439,59 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 			arrow = ARROW_SOUTH + ((8 - sector + 16) % 16);
 		}
 
-		if (!write(home_x + 1, home_y, &arrow, 1)) { return false; }
+		const Position arrow_position = position(HOME_DIR, 1);
+
+		if (!write(arrow_position.x, arrow_position.y, &arrow, 1)) { return false; }
 	}
 
 	if (enabled(HOME_DIST)) {
 		const uint8_t home = 0x11;
 
-		if (!write(home_x, home_y, &home, 1)
-		    || !number({home_x + 3, home_y, large ? 12 : 16}, "", data.home_distance_m * distance_scale,
+		if (!write(home_position.x, home_position.y, &home, 1)
+		    || !number({home_position.x + 3, home_position.y, home_position.width}, "", data.home_distance_m * distance_scale,
 			       0, distance_unit, 0.f, 1e9f)) { return false; }
 	}
 
-	if (enabled(MESSAGES) && !text({left, 2, _columns - 2 * left}, data.message, sizeof(data.message))) { return false; }
+	if (enabled(MESSAGES) && !text(position(MESSAGES, MAX_TEXT), data.message, sizeof(data.message))) { return false; }
 
-	if (enabled(ARTIFICIAL_HORIZON) && !horizon(data, settings, center_x, center_y, half_height)) { return false; }
+	const Position horizon_position = position(ARTIFICIAL_HORIZON, 0);
+
+	if (enabled(ARTIFICIAL_HORIZON) && !horizon(data, settings, horizon_position.x, horizon_position.y, half_height)) { return false; }
 
 	if (enabled(HORIZON_SIDEBARS)) {
+		const Position sidebar_position = position(HORIZON_SIDEBARS, 0);
+
 		for (int row = -half_height; row <= half_height; ++row) {
-			if (!write(center_x - HORIZON_HALF_WIDTH - 2, center_y + row, &SIDEBAR, 1)
-			    || !write(center_x + HORIZON_HALF_WIDTH + 2, center_y + row, &SIDEBAR, 1)) { return false; }
+			if (!write(sidebar_position.x - HORIZON_HALF_WIDTH - 2, sidebar_position.y + row, &SIDEBAR, 1)
+			    || !write(sidebar_position.x + HORIZON_HALF_WIDTH + 2, sidebar_position.y + row, &SIDEBAR, 1)) { return false; }
 		}
 	}
 
 	if (enabled(CROSSHAIRS)) {
-		const int maximum_offset = _rows - center_y - 1;
-		const int offset = settings.crosshair_offset < -center_y ? -center_y :
-				   settings.crosshair_offset > maximum_offset ? maximum_offset : settings.crosshair_offset;
+		const Position crosshair_position = position(CROSSHAIRS, 3);
 
-		if (!write(center_x - 1, center_y + offset, RETICLE, sizeof(RETICLE))) { return false; }
+		if (!write(crosshair_position.x - 1, crosshair_position.y, RETICLE, sizeof(RETICLE))) { return false; }
 	}
 
-	const Position speed_position {large ? center_x - 17 : 0, instruments_y, large ? 10 : 8};
-
-	if (enabled(GPS_SPEED) && !number({speed_position.x, ground_speed_y, speed_position.width}, "\x70 ",
-					  data.ground_speed_m_s * speed_scale, 1, speed_unit, 0.f, 9999.f, true)) { return false; }
+	if (enabled(GPS_SPEED) && !speed(position(GPS_SPEED, 10), "\x70 ",
+					 data.ground_speed_m_s * speed_scale, speed_unit)) { return false; }
 
 	const char *airspeed_prefix = _inav_font ? (data.airspeed_estimated ? "\xe2 *" : "\xe2 ") :
 				      (data.airspeed_estimated ? "AS*" : "AS ");
 
-	if (enabled(AIRSPEED) && !number(speed_position, airspeed_prefix,
-					 data.airspeed_m_s * speed_scale, 1, speed_unit, 0.f, 9999.f, true)) { return false; }
+	if (enabled(AIRSPEED) && !speed(position(AIRSPEED, 10), airspeed_prefix,
+					data.airspeed_m_s * speed_scale, speed_unit)) { return false; }
 
-	if (enabled(ALTITUDE) && !number({center_x + 8, instruments_y, _columns - center_x - 8}, "",
-					 data.altitude_m * distance_scale, 0, altitude_unit, -1e7f, 1e7f)) { return false; }
+	if (enabled(ALTITUDE) && !number(position(ALTITUDE, 12), "", data.altitude_m * distance_scale,
+					 0, altitude_unit, -1e7f, 1e7f)) { return false; }
 
-	if (enabled(NUMERICAL_VARIO) && !number({_columns - 12, vario_y, 11}, "VS ",
-						data.vertical_speed_m_s * distance_scale, 1, vario_unit, -9999.f, 9999.f, true)) { return false; }
+	if (enabled(NUMERICAL_VARIO) && !number(position(NUMERICAL_VARIO, 11), "VS ",
+						data.vertical_speed_m_s * distance_scale, 1, vario_unit, -9999.f, 9999.f)) { return false; }
 
-	if (enabled(THROTTLE) && !number({left, _rows - 1, 9}, "\x04 ", data.throttle_percent,
+	if (enabled(THROTTLE) && !number(position(THROTTLE, 9), "\x04 ", data.throttle_percent,
 					 0, "%", 0.f, 100.f)) { return false; }
 
-	// Center only the enabled, formatted fields, with percentage before capacity/current.
+	// Battery fields retain their assigned coordinates as values or the enabled mask change.
 	char remaining[7] {};
 	char capacity[10] {};
 	char current[9] {};
@@ -508,75 +516,68 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 		format_number(current, sizeof(current), 8, "", data.current_a, 1, "\x9a", 0.f, 9999.f);
 	}
 
-	const char *gap = large ? "   " : "  ";
-	char battery_group[MAX_TEXT + 1];
-	snprintf(battery_group, sizeof(battery_group), "%s%s%s%s%s", remaining,
-		 remaining[0] && (capacity[0] || current[0]) ? gap : "", capacity,
-		 capacity[0] && current[0] ? gap : "", current);
-	const int battery_length = strlen(battery_group);
+	const char *battery_fields[] = {remaining, capacity, current};
+	const SymbolIndex battery_items[] = {BATT_PERC, MAH_DRAWN, CURRENT_DRAW};
 
-	if (battery_length > 0 && !formatted({(_columns - battery_length) / 2, bottom_y, battery_length}, battery_group)) { return false; }
+	for (unsigned i = 0; i < 3; ++i) {
+		const int length = strlen(battery_fields[i]);
 
-	const bool compensated_voltage_enabled = enabled(BATT_COMP_VOLTAGE) || enabled(BATT_CELL_COMP_VOLTAGE);
+		if (length == 0) { continue; }
+
+		if (!formatted(position(battery_items[i], length), battery_fields[i])) { return false; }
+
+	}
 
 	for (int kind = 0; kind < 2; ++kind) {
 		const bool compensated = kind == 1;
-		const bool pack_enabled = enabled(compensated ? BATT_COMP_VOLTAGE : MAIN_BATT_VOLTAGE);
-		const bool cell_enabled = enabled(compensated ? BATT_CELL_COMP_VOLTAGE : AVG_CELL_VOLTAGE);
+		const SymbolIndex pack_item = compensated ? BATT_COMP_VOLTAGE : MAIN_BATT_VOLTAGE;
+		const SymbolIndex cell_item = compensated ? BATT_CELL_COMP_VOLTAGE : AVG_CELL_VOLTAGE;
+		const bool pack_enabled = enabled(pack_item);
+		const bool cell_enabled = enabled(cell_item);
+		Position pack_position = position(pack_item, 11);
+		const Position cell_position = position(cell_item, 11);
 
-		if (!pack_enabled && !cell_enabled) { continue; }
+		// Keep the agreed V/V presentation when both fields share a row, while
+		// each field remains at its own coordinate. Space is reserved for '/'.
+		const bool pair = pack_enabled && cell_enabled && pack_position.y == cell_position.y
+				  && cell_position.x - pack_position.x >= (compensated ? 6 : 4);
 
-		char pack_voltage[8] {};
-		char cell_voltage[8] {};
-		char voltage_pair[MAX_TEXT + 1];
-
-		if (pack_enabled) {
-			format_number(pack_voltage, sizeof(pack_voltage), 7, "",
-				      compensated ? data.compensated_battery_voltage : data.battery_voltage, 1, "V", 0.f, 999.f);
+		if (pair && cell_position.x - pack_position.x - 1 < pack_position.width) {
+			pack_position.width = cell_position.x - pack_position.x - 1;
 		}
 
-		if (cell_enabled) {
-			format_number(cell_voltage, sizeof(cell_voltage), 7, "",
-				      compensated ? data.compensated_cell_voltage : data.cell_voltage, 2, "V", 0.f, 9.99f);
+		if (pack_enabled && !number(pack_position, compensated ? "C " : "",
+					    compensated ? data.compensated_battery_voltage : data.battery_voltage,
+					    1, "V", 0.f, 999.f)) { return false; }
+
+		if (pair) {
+			const uint8_t separator = '/';
+
+			if (!write(cell_position.x - 1, cell_position.y, &separator, 1)) { return false; }
 		}
 
-		snprintf(voltage_pair, sizeof(voltage_pair), "%s%s%s%s", compensated ? "C " : "", pack_voltage,
-			 pack_enabled && cell_enabled ? "/" : "", cell_voltage);
-		const int voltage_length = strlen(voltage_pair);
-		int voltage_x = (_columns - voltage_length) / 2;
-		int voltage_y = bottom_y + 1;
-
-		// Compensated readings own the bottom row. Optional raw readings move above
-		// the group when both are selected; the compact canvas has a spare row at 9.
-		if (!compensated && compensated_voltage_enabled) {
-			voltage_y = large ? bottom_y - 1 : 9;
-		}
-
-		if (!large && voltage_y == bottom_y + 1 && enabled(POWER)) {
-			// Leave the compact canvas's optional watts field unobstructed.
-			voltage_x = 11 + (_columns - 11 - voltage_length) / 2;
-		}
-
-		if (!formatted({voltage_x, voltage_y, voltage_length}, voltage_pair)) { return false; }
+		if (cell_enabled && !number(cell_position, compensated && !pair ? "C " : "",
+					    compensated ? data.compensated_cell_voltage : data.cell_voltage,
+					    2, "V", 0.f, 9.99f)) { return false; }
 	}
 
-	if (enabled(PITCH_ANGLE) && !number({left, large ? _rows - 6 : 11, 13}, "P ", data.pitch_rad * DEGREES,
+	if (enabled(PITCH_ANGLE) && !number(position(PITCH_ANGLE, 13), "P ", data.pitch_rad * DEGREES,
 					    0, "DEG", -180.f, 180.f)) { return false; }
 
-	if (enabled(ROLL_ANGLE) && !number({_columns - 14, large ? _rows - 6 : 11, 13}, "R ", data.roll_rad * DEGREES,
-					   0, "DEG", -180.f, 180.f, true)) { return false; }
+	if (enabled(ROLL_ANGLE) && !number(position(ROLL_ANGLE, 13), "R ", data.roll_rad * DEGREES,
+					   0, "DEG", -180.f, 180.f)) { return false; }
 
 	const float power = finite_range(data.current_a, 0.f, 9999.f) && finite_range(data.battery_voltage, 0.f, 999.f)
 			    ? data.current_a * data.battery_voltage : NAN;
 
-	if (enabled(POWER) && !number(position({left, _rows - 3, 10}, {0, 13, 10}), "", power,
+	if (enabled(POWER) && !number(position(POWER, 10), "", power,
 				      0, "W", 0.f, 1e7f)) { return false; }
 
-	if (enabled(RSSI_VALUE) && !number({_columns - 12, large ? _rows - 1 : 15, 11}, "RC ", data.rssi_percent,
-					   0, "%", 0.f, 100.f, true)) { return false; }
+	if (enabled(RSSI_VALUE) && !number(position(RSSI_VALUE, 11), "RC ", data.rssi_percent,
+					   0, "%", 0.f, 100.f)) { return false; }
 
-	if (enabled(GPS_SATS) && !number({_columns - 9, large ? _rows - 2 : 1, 8}, "SAT ", data.satellites,
-					 0, "", 0.f, 255.f, true)) { return false; }
+	if (enabled(GPS_SATS) && !number(position(GPS_SATS, 8), "SAT ", data.satellites,
+					 0, "", 0.f, 255.f)) { return false; }
 
 	// Retain double precision until formatting GNSS coordinates.
 	for (int axis = 0; axis < 2; ++axis) {
@@ -593,10 +594,10 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 				snprintf(buffer, sizeof(buffer), "%s--", prefix);
 			}
 
-			const int width = large ? _columns / 2 - 2 : 15;
-			const Position location {axis == 0 ? left : _columns - width - left, large ? _rows - 5 : 14, width};
+			const SymbolIndex item = axis == 0 ? GPS_LAT : GPS_LON;
 
-			if (!formatted(location, buffer, axis == 1)) { return false; }
+			if (!formatted(position(item, 24), buffer)) { return false; }
+
 		}
 	}
 

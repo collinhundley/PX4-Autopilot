@@ -192,12 +192,8 @@ void MspOsd::SendConfig()
 	msp_osd_config.osd_avg_cell_voltage_pos = enabled(SymbolIndex::AVG_CELL_VOLTAGE) ? osd_avg_cell_voltage_pos :
 			LOCATION_HIDDEN;
 
-	// the location of our crosshairs can change
-	msp_osd_config.osd_crosshairs_pos = LOCATION_HIDDEN;
-
-	if (enabled(SymbolIndex::CROSSHAIRS)) {
-		msp_osd_config.osd_crosshairs_pos = osd_crosshairs_pos - 32 * _param_osd_ch_height.get();
-	}
+	// Legacy telemetry uses its fixed grid; DisplayPort uses OSD_POS_CROSS_X/Y.
+	msp_osd_config.osd_crosshairs_pos = enabled(SymbolIndex::CROSSHAIRS) ? osd_crosshairs_pos : LOCATION_HIDDEN;
 
 	// possibly available, but not currently used
 	msp_osd_config.osd_flymode_pos = 			LOCATION_HIDDEN;
@@ -515,6 +511,7 @@ int MspOsd::print_status()
 	PX4_INFO("\tunsuccessful sends: %lu", _performance_data.unsuccessful_sends);
 	PX4_INFO("\treceive errors: %lu, congested frames: %lu", (unsigned long)_receive_errors, (unsigned long)_congested_frames);
 	PX4_INFO("\tpending bytes: %u, negotiated canvas: %ux%u", (unsigned)_msp.pending_bytes(), _canvas_columns, _canvas_rows);
+	PX4_INFO("\tOSD_CANVAS: %ld (Auto fallback / profile 4: 53x20)", (long)_param_osd_canvas.get());
 
 	PX4_INFO("Current message: %s", _telemetry.data().message);
 

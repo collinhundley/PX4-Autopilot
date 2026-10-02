@@ -81,13 +81,14 @@ parameters:
         OSD_CANVAS:
             description:
                 short: OSD canvas size
-                long: Auto accepts the air unit's MSP canvas size, falling back to 60 by 22. Smaller canvases use a compact layout.
+                long: Auto accepts the air unit's MSP canvas size, falling back to 53 by 20 for DJI O4 and Goggles N3. Select 53 by 20 explicitly to ignore announcements. Item coordinates are fixed; adjust OSD_POS_ parameters to fit a different canvas.
             type: enum
             values:
                 0: Auto
                 1: 30 by 16
                 2: 50 by 18
                 3: 60 by 22
+                4: 53 by 20 (DJI O4 / Goggles N3)
             default: 0
 
         OSD_CAM_PITCH:
@@ -119,19 +120,6 @@ parameters:
             min: 1
             max: 60
             default: 10
-
-        # OSD Crosshairs Vertical Position
-        OSD_CH_HEIGHT:
-            description:
-                short: OSD Crosshairs Height
-                long: |
-                  Vertical crosshair offset from the center reference in rows.
-                  Positive values move downward. The existing parameter name is retained.
-            type: int32
-            default: 0
-            min: -8
-            max: 8
-
 
         # OSD Log Level
         OSD_LOG_LEVEL:
@@ -186,3 +174,677 @@ parameters:
             min: 0
             max: 1
             default: 0
+
+    - group: OSD Layout
+      definitions:
+        OSD_POS_ARM_X:
+            description:
+                short: Arming state X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 18
+            min: 0
+            max: 59
+
+        OSD_POS_ARM_Y:
+            description:
+                short: Arming state Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 21
+
+        OSD_POS_LAT_X:
+            description:
+                short: Latitude X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 59
+
+        OSD_POS_LAT_Y:
+            description:
+                short: Latitude Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 15
+            min: 0
+            max: 21
+
+        OSD_POS_LON_X:
+            description:
+                short: Longitude X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 28
+            min: 0
+            max: 59
+
+        OSD_POS_LON_Y:
+            description:
+                short: Longitude Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 15
+            min: 0
+            max: 21
+
+        OSD_POS_SATS_X:
+            description:
+                short: Satellite count X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 46
+            min: 0
+            max: 59
+
+        OSD_POS_SATS_Y:
+            description:
+                short: Satellite count Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 18
+            min: 0
+            max: 21
+
+        OSD_POS_GSPD_X:
+            description:
+                short: Ground speed X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 11
+            min: 0
+            max: 59
+
+        OSD_POS_GSPD_Y:
+            description:
+                short: Ground speed Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 9
+            min: 0
+            max: 21
+
+        OSD_POS_HDIST_X:
+            description:
+                short: Home icon and distance X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 22
+            min: 0
+            max: 59
+
+        OSD_POS_HDIST_Y:
+            description:
+                short: Home icon and distance Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 21
+
+        OSD_POS_HDIR_X:
+            description:
+                short: Home direction arrow X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 23
+            min: 0
+            max: 59
+
+        OSD_POS_HDIR_Y:
+            description:
+                short: Home direction arrow Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 21
+
+        OSD_POS_VOLT_X:
+            description:
+                short: Measured pack voltage X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 21
+            min: 0
+            max: 59
+
+        OSD_POS_VOLT_Y:
+            description:
+                short: Measured pack voltage Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 17
+            min: 0
+            max: 21
+
+        OSD_POS_CURR_X:
+            description:
+                short: Current X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 32
+            min: 0
+            max: 59
+
+        OSD_POS_CURR_Y:
+            description:
+                short: Current Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 18
+            min: 0
+            max: 21
+
+        OSD_POS_MAH_X:
+            description:
+                short: Consumed capacity X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 24
+            min: 0
+            max: 59
+
+        OSD_POS_MAH_Y:
+            description:
+                short: Consumed capacity Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 18
+            min: 0
+            max: 21
+
+        OSD_POS_RSSI_X:
+            description:
+                short: RC RSSI X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 46
+            min: 0
+            max: 59
+
+        OSD_POS_RSSI_Y:
+            description:
+                short: RC RSSI Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 19
+            min: 0
+            max: 21
+
+        OSD_POS_ALT_X:
+            description:
+                short: Altitude above home X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 34
+            min: 0
+            max: 59
+
+        OSD_POS_ALT_Y:
+            description:
+                short: Altitude above home Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 6
+            min: 0
+            max: 21
+
+        OSD_POS_VSPD_X:
+            description:
+                short: Vertical speed X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 41
+            min: 0
+            max: 59
+
+        OSD_POS_VSPD_Y:
+            description:
+                short: Vertical speed Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 11
+            min: 0
+            max: 21
+
+        OSD_POS_MODE_X:
+            description:
+                short: Flight mode X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 59
+
+        OSD_POS_MODE_Y:
+            description:
+                short: Flight mode Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 21
+
+        OSD_POS_PITCH_X:
+            description:
+                short: Pitch angle X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 59
+
+        OSD_POS_PITCH_Y:
+            description:
+                short: Pitch angle Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 14
+            min: 0
+            max: 21
+
+        OSD_POS_ROLL_X:
+            description:
+                short: Roll angle X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 39
+            min: 0
+            max: 59
+
+        OSD_POS_ROLL_Y:
+            description:
+                short: Roll angle Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 14
+            min: 0
+            max: 21
+
+        OSD_POS_CROSS_X:
+            description:
+                short: Crosshair X position
+                long: |
+                    Zero-based column of the centre of the symbol, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 26
+            min: 0
+            max: 59
+
+        OSD_POS_CROSS_Y:
+            description:
+                short: Crosshair Y position
+                long: |
+                    Zero-based row of the centre of the symbol, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 7
+            min: 0
+            max: 21
+
+        OSD_POS_CELL_X:
+            description:
+                short: Measured cell voltage X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 27
+            min: 0
+            max: 59
+
+        OSD_POS_CELL_Y:
+            description:
+                short: Measured cell voltage Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 17
+            min: 0
+            max: 21
+
+        OSD_POS_SBAR_X:
+            description:
+                short: Horizon sidebars X position
+                long: |
+                    Zero-based column of the centre between the two sidebars, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 26
+            min: 0
+            max: 59
+
+        OSD_POS_SBAR_Y:
+            description:
+                short: Horizon sidebars Y position
+                long: |
+                    Zero-based row of the centre between the two sidebars, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 7
+            min: 0
+            max: 21
+
+        OSD_POS_POWER_X:
+            description:
+                short: Electrical power X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 59
+
+        OSD_POS_POWER_Y:
+            description:
+                short: Electrical power Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 17
+            min: 0
+            max: 21
+
+        OSD_POS_TIME_X:
+            description:
+                short: Flight time X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 42
+            min: 0
+            max: 59
+
+        OSD_POS_TIME_Y:
+            description:
+                short: Flight time Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 21
+
+        OSD_POS_ASPD_X:
+            description:
+                short: Airspeed X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 11
+            min: 0
+            max: 59
+
+        OSD_POS_ASPD_Y:
+            description:
+                short: Airspeed Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 6
+            min: 0
+            max: 21
+
+        OSD_POS_HORIZ_X:
+            description:
+                short: Artificial horizon X position
+                long: |
+                    Zero-based column of the centre of the symbol, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 26
+            min: 0
+            max: 59
+
+        OSD_POS_HORIZ_Y:
+            description:
+                short: Artificial horizon Y position
+                long: |
+                    Zero-based row of the centre of the symbol, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 7
+            min: 0
+            max: 21
+
+        OSD_POS_MSG_X:
+            description:
+                short: Messages X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 59
+
+        OSD_POS_MSG_Y:
+            description:
+                short: Messages Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 3
+            min: 0
+            max: 21
+
+        OSD_POS_THR_X:
+            description:
+                short: Throttle X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 1
+            min: 0
+            max: 59
+
+        OSD_POS_THR_Y:
+            description:
+                short: Throttle Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 19
+            min: 0
+            max: 21
+
+        OSD_POS_CVOLT_X:
+            description:
+                short: Compensated pack voltage X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 20
+            min: 0
+            max: 59
+
+        OSD_POS_CVOLT_Y:
+            description:
+                short: Compensated pack voltage Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 19
+            min: 0
+            max: 21
+
+        OSD_POS_CCELL_X:
+            description:
+                short: Compensated cell voltage X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 28
+            min: 0
+            max: 59
+
+        OSD_POS_CCELL_Y:
+            description:
+                short: Compensated cell voltage Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 19
+            min: 0
+            max: 21
+
+        OSD_POS_BATPCT_X:
+            description:
+                short: Battery remaining percentage X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 16
+            min: 0
+            max: 59
+
+        OSD_POS_BATPCT_Y:
+            description:
+                short: Battery remaining percentage Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
+            type: int32
+            default: 18
+            min: 0
+            max: 21

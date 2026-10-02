@@ -55,9 +55,107 @@ void MspOsd::SendDisplay(uint64_t now)
 		display.symbols = static_cast<uint32_t>(_param_osd_symbols.get());
 		display.imperial = _param_osd_units.get() == 1;
 		display.inav_font = _param_osd_font.get() == 1;
-		display.crosshair_offset = _param_osd_ch_height.get();
 		display.camera_pitch_deg = _param_osd_cam_pitch.get();
 		display.vertical_fov_deg = _param_osd_cam_vfov.get();
+
+		bool reset_positions = false;
+		const auto coordinate = [&reset_positions](auto & parameter, int32_t maximum) {
+			// Earlier firmware allowed -1. Migrate saved negative coordinates to
+			// this parameter's fixed default, preserving all valid custom positions.
+			if (parameter.get() < 0) {
+				parameter.reset();
+				reset_positions = true;
+			}
+
+			return static_cast<int16_t>(math::constrain<int32_t>(parameter.get(), 0, maximum));
+		};
+
+		display.positions[msp_osd::DISARMED] = {coordinate(_param_osd_pos_arm_x, 59),
+							coordinate(_param_osd_pos_arm_y, 21)
+						       };
+		display.positions[msp_osd::GPS_LAT] = {coordinate(_param_osd_pos_lat_x, 59),
+						       coordinate(_param_osd_pos_lat_y, 21)
+						      };
+		display.positions[msp_osd::GPS_LON] = {coordinate(_param_osd_pos_lon_x, 59),
+						       coordinate(_param_osd_pos_lon_y, 21)
+						      };
+		display.positions[msp_osd::GPS_SATS] = {coordinate(_param_osd_pos_sats_x, 59),
+							coordinate(_param_osd_pos_sats_y, 21)
+						       };
+		display.positions[msp_osd::GPS_SPEED] = {coordinate(_param_osd_pos_gspd_x, 59),
+							 coordinate(_param_osd_pos_gspd_y, 21)
+							};
+		display.positions[msp_osd::HOME_DIST] = {coordinate(_param_osd_pos_hdist_x, 59),
+							 coordinate(_param_osd_pos_hdist_y, 21)
+							};
+		display.positions[msp_osd::HOME_DIR] = {coordinate(_param_osd_pos_hdir_x, 59),
+							coordinate(_param_osd_pos_hdir_y, 21)
+						       };
+		display.positions[msp_osd::MAIN_BATT_VOLTAGE] = {coordinate(_param_osd_pos_volt_x, 59),
+								 coordinate(_param_osd_pos_volt_y, 21)
+								};
+		display.positions[msp_osd::CURRENT_DRAW] = {coordinate(_param_osd_pos_curr_x, 59),
+							    coordinate(_param_osd_pos_curr_y, 21)
+							   };
+		display.positions[msp_osd::MAH_DRAWN] = {coordinate(_param_osd_pos_mah_x, 59),
+							 coordinate(_param_osd_pos_mah_y, 21)
+							};
+		display.positions[msp_osd::RSSI_VALUE] = {coordinate(_param_osd_pos_rssi_x, 59),
+							  coordinate(_param_osd_pos_rssi_y, 21)
+							 };
+		display.positions[msp_osd::ALTITUDE] = {coordinate(_param_osd_pos_alt_x, 59),
+							coordinate(_param_osd_pos_alt_y, 21)
+						       };
+		display.positions[msp_osd::NUMERICAL_VARIO] = {coordinate(_param_osd_pos_vspd_x, 59),
+							       coordinate(_param_osd_pos_vspd_y, 21)
+							      };
+		display.positions[msp_osd::FLYMODE] = {coordinate(_param_osd_pos_mode_x, 59),
+						       coordinate(_param_osd_pos_mode_y, 21)
+						      };
+		display.positions[msp_osd::PITCH_ANGLE] = {coordinate(_param_osd_pos_pitch_x, 59),
+							   coordinate(_param_osd_pos_pitch_y, 21)
+							  };
+		display.positions[msp_osd::ROLL_ANGLE] = {coordinate(_param_osd_pos_roll_x, 59),
+							  coordinate(_param_osd_pos_roll_y, 21)
+							 };
+		display.positions[msp_osd::CROSSHAIRS] = {coordinate(_param_osd_pos_cross_x, 59),
+							  coordinate(_param_osd_pos_cross_y, 21)
+							 };
+		display.positions[msp_osd::AVG_CELL_VOLTAGE] = {coordinate(_param_osd_pos_cell_x, 59),
+								coordinate(_param_osd_pos_cell_y, 21)
+							       };
+		display.positions[msp_osd::HORIZON_SIDEBARS] = {coordinate(_param_osd_pos_sbar_x, 59),
+								coordinate(_param_osd_pos_sbar_y, 21)
+							       };
+		display.positions[msp_osd::POWER] = {coordinate(_param_osd_pos_power_x, 59),
+						     coordinate(_param_osd_pos_power_y, 21)
+						    };
+		display.positions[msp_osd::FLIGHT_TIME] = {coordinate(_param_osd_pos_time_x, 59),
+							   coordinate(_param_osd_pos_time_y, 21)
+							  };
+		display.positions[msp_osd::AIRSPEED] = {coordinate(_param_osd_pos_aspd_x, 59),
+							coordinate(_param_osd_pos_aspd_y, 21)
+						       };
+		display.positions[msp_osd::ARTIFICIAL_HORIZON] = {coordinate(_param_osd_pos_horiz_x, 59),
+								  coordinate(_param_osd_pos_horiz_y, 21)
+								 };
+		display.positions[msp_osd::MESSAGES] = {coordinate(_param_osd_pos_msg_x, 59),
+							coordinate(_param_osd_pos_msg_y, 21)
+						       };
+		display.positions[msp_osd::THROTTLE] = {coordinate(_param_osd_pos_thr_x, 59),
+							coordinate(_param_osd_pos_thr_y, 21)
+						       };
+		display.positions[msp_osd::BATT_COMP_VOLTAGE] = {coordinate(_param_osd_pos_cvolt_x, 59),
+								 coordinate(_param_osd_pos_cvolt_y, 21)
+								};
+		display.positions[msp_osd::BATT_CELL_COMP_VOLTAGE] = {coordinate(_param_osd_pos_ccell_x, 59),
+								      coordinate(_param_osd_pos_ccell_y, 21)
+								     };
+		display.positions[msp_osd::BATT_PERC] = {coordinate(_param_osd_pos_batpct_x, 59),
+							 coordinate(_param_osd_pos_batpct_y, 21)
+							};
+
+		if (reset_positions) { param_notify_changes(); }
 
 		if (_param_osd_canvas.get() == 1) {
 			display.columns = 30;
@@ -67,10 +165,16 @@ void MspOsd::SendDisplay(uint64_t now)
 			display.columns = 50;
 			display.rows = 18;
 
+		} else if (_param_osd_canvas.get() == 3) {
+			display.columns = 60;
+			display.rows = 22;
+
 		} else if (_param_osd_canvas.get() == 0 && _canvas_columns != 0) {
 			display.columns = _canvas_columns;
 			display.rows = _canvas_rows;
 		}
+
+		// Profile 4 and Auto without an announcement use the DJI 53x20 default.
 
 		if (_renderer.render(_telemetry.data(), display)) {
 			_display_active = true;
