@@ -31,16 +31,21 @@
  *
  ****************************************************************************/
 
-#if defined(CONFIG_SYSTEM_CDCACM)
+#if defined(CONFIG_SYSTEM_CDCACM) || defined(CONFIG_NET_CDCNCM)
 
 #include "cdcacm_autostart.h"
+#ifdef CONFIG_NET_CDCNCM
+#include "usb_network.h"
+#endif
 
 __BEGIN_DECLS
 #include <arch/board/board.h>
 #include <builtin/builtin.h>
 
+#ifndef CONFIG_NET_CDCNCM
 extern int sercon_main(int c, char **argv);
 extern int serdis_main(int c, char **argv);
+#endif
 __END_DECLS
 
 #include <px4_platform_common/shutdown.h>
@@ -79,18 +84,39 @@ CdcAcmAutostart::~CdcAcmAutostart()
 {
 	PX4_INFO("Stopping CDC/ACM autostart");
 
+#ifndef CONFIG_NET_CDCNCM
+
 	if (_active_protocol == UsbProtocol::mavlink) {
 		stop_mavlink();
 	}
 
+#endif
+
 	close_ttyacm();
 	ScheduleClear();
+#ifdef CONFIG_NET_CDCNCM
+
+	if (_network_owner) {
+		usb_network_stop(_active_protocol == UsbProtocol::mavlink,
+				 _active_protocol == UsbProtocol::nsh || _active_protocol == UsbProtocol::ublox);
+	}
+
+#endif
 }
 
 int CdcAcmAutostart::Start()
 {
 	PX4_INFO("Starting CDC/ACM autostart");
 	UpdateParams(true);
+#ifdef CONFIG_NET_CDCNCM
+
+	if (usb_network_connect() != 0) {
+		PX4_ERR("USB composite connect failed");
+		return PX4_ERROR;
+	}
+
+	_network_owner = true;
+#endif
 
 	ScheduleNow();
 
@@ -128,6 +154,11 @@ void CdcAcmAutostart::run_state_machine()
 		return;
 	}
 
+#endif
+
+#ifdef CONFIG_NET_CDCNCM
+	// Independent of serial probing and its SYS_USB_AUTO protocol policy.
+	usb_network_update(_vbus_present, _usb_mav_mode.get());
 #endif
 
 	// Do not reconfigure USB while flying
@@ -193,7 +224,13 @@ void CdcAcmAutostart::state_disconnected()
 	if (_vbus_present && _vbus_present_prev) {
 		PX4_DEBUG("starting sercon");
 
+#ifdef CONFIG_NET_CDCNCM
+
+		if (usb_network_connected()) {
+#else
+
 		if (sercon_main(0, nullptr) == EXIT_SUCCESS) {
+#endif
 			_state = UsbAutoStartState::connecting;
 			PX4_DEBUG("state connecting");
 		}
@@ -371,7 +408,9 @@ void CdcAcmAutostart::state_disconnecting()
 	close_ttyacm();
 
 	// Disconnect serial
+#ifndef CONFIG_NET_CDCNCM
 	serdis_main(0, NULL);
+#endif
 	_state = UsbAutoStartState::disconnected;
 	_active_protocol = UsbProtocol::none;
 }
@@ -609,6 +648,14 @@ void CdcAcmAutostart::UpdateParams(const bool force)
 
 int CdcAcmAutostart::custom_command(int argc, char *argv[])
 {
+	if (argc > 0 && !strcmp(argv[0], "connect")) {
+#ifdef CONFIG_NET_CDCNCM
+		return usb_network_connect();
+#else
+		return sercon_main(0, nullptr);
+#endif
+	}
+
 	return print_usage("unknown command");
 }
 
@@ -656,6 +703,9 @@ int CdcAcmAutostart::print_status()
 	PX4_INFO("State: %s", state);
 	PX4_INFO("Protocol: %s", protocol);
 	PX4_INFO("VBUS: %s", _vbus_present ? "present" : "absent");
+#ifdef CONFIG_NET_CDCNCM
+	usb_network_status();
+#endif
 	PX4_INFO("SYS_USB_AUTO: %ld", _sys_usb_auto.get());
 
 	return PX4_OK;
@@ -681,6 +731,7 @@ Manages the USB CDC/ACM serial device (`/dev/ttyACM0`).
 
 	PRINT_MODULE_USAGE_NAME("cdcacm_autostart", "system");
 	PRINT_MODULE_USAGE_COMMAND("start");
+	PRINT_MODULE_USAGE_COMMAND_DESCR("connect", "Register the USB device for startup recovery");
 	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
 
 	return 0;
@@ -690,7 +741,7 @@ Manages the USB CDC/ACM serial device (`/dev/ttyACM0`).
 
 extern "C" __EXPORT int cdcacm_autostart_main(int argc, char *argv[])
 {
-#if defined(CONFIG_SYSTEM_CDCACM)
+#if defined(CONFIG_SYSTEM_CDCACM) || defined(CONFIG_NET_CDCNCM)
 	return ModuleBase::main(CdcAcmAutostart::desc, argc, argv);
 #endif
 	return 1;

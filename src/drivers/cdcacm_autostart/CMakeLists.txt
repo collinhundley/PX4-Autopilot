@@ -40,3 +40,8 @@ px4_add_module(
 	MODULE_CONFIG
 		cdcacm_autostart_params.yaml
 	)
+
+if(CONFIG_NET_CDCNCM)
+	target_sources(drivers__cdcacm_autostart PRIVATE usb_network.cpp)
+	target_link_libraries(drivers__cdcacm_autostart PRIVATE nuttx_apps)
+endif()

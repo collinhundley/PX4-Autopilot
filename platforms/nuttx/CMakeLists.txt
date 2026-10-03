@@ -135,6 +135,11 @@ endif()
 if(CONFIG_NET)
 	list(APPEND nuttx_libs nuttx_net)
 	target_link_libraries(nuttx_fs INTERFACE nuttx_net)
+	if(CONFIG_NET_CDCNCM)
+		# Composite USB networking uses IOB allocation and libc queue helpers.
+		target_link_libraries(nuttx_drivers INTERFACE nuttx_net)
+		target_link_libraries(nuttx_net INTERFACE nuttx_mm nuttx_c)
+	endif()
 endif()
 
 file(RELATIVE_PATH PX4_BINARY_DIR_REL ${CMAKE_CURRENT_BINARY_DIR} ${PX4_BINARY_DIR})
@@ -487,6 +492,7 @@ if (TARGET parameters_xml AND TARGET airframes_xml)
 				--image ${_mkfw_image} > ${fw_package}
 		DEPENDS
 			${PX4_BINARY_DIR}/${PX4_CONFIG}.bin
+			${PX4_SOURCE_DIR}/Tools/px_mkfw.py
 			${_mkfw_extra_depends}
 			airframes_xml
 			parameters_xml
@@ -495,6 +501,14 @@ if (TARGET parameters_xml AND TARGET airframes_xml)
 		)
 
 	add_custom_target(px4_package ALL DEPENDS ${fw_package})
+
+	if(PX4_CONFIG STREQUAL "px4_fmu-v6c_osd")
+		add_custom_target(usb_ncm_size_check ALL
+			COMMAND ${PYTHON_EXECUTABLE} ${PX4_SOURCE_DIR}/Tools/usb_ncm/check_size.py ${PX4_BINARY_DIR}
+			DEPENDS px4_package
+			COMMENT "Checking application flash in ELF, binary and unpacked PX4 image"
+		)
+	endif()
 
 	# upload helper
 	# create upload target helper if NuttX USB CDCACM is present

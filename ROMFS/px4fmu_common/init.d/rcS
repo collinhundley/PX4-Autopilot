@@ -604,7 +604,10 @@ else
 	then
 		if ! cdcacm_autostart start
 		then
-			sercon
+			if ! cdcacm_autostart connect
+			then
+				sercon
+			fi
 			echo "Starting MAVLink on /dev/ttyACM0"
 			mavlink start -d /dev/ttyACM0
 		fi

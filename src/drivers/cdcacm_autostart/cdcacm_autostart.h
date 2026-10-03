@@ -115,7 +115,10 @@ private:
 	UsbProtocol _active_protocol{UsbProtocol::none};
 	bool _vbus_present{false};
 	bool _vbus_present_prev{false};
-	int _ttyacm_fd{-1};
+#ifdef CONFIG_NET_CDCNCM
+	bool _network_owner {false};
+#endif
+	int _ttyacm_fd {-1};
 
 	char _buffer[80] {};
 	int _bytes_read{0};

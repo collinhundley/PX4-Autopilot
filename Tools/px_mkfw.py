@@ -122,6 +122,8 @@ if args.airframe_xml != None:
 if args.image != None:
 	f = open(args.image, "rb")
 	bytes = f.read()
+	if desc.get('image_maxsize') and len(bytes) > desc['image_maxsize']:
+		raise SystemExit('Firmware image exceeds application flash: %d > %d bytes' % (len(bytes), desc['image_maxsize']))
 	desc['image_size'] = len(bytes)
 	desc['image'] = base64.b64encode(zlib.compress(bytes,9)).decode('utf-8')
 if args.image_signed:

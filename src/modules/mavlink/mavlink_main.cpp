@@ -60,6 +60,7 @@
 #include <uORB/topics/event.h>
 #include "mavlink_receiver.h"
 #include "mavlink_main.h"
+#include "mavlink_network.h"
 
 #ifdef CONFIG_DRIVERS_SERIALPASSTHROUGH
 #include <drivers/serialpassthrough/serialpassthrough.hpp>
@@ -90,6 +91,12 @@
 #define MAIN_LOOP_DELAY                10000           ///< 100 Hz @ 1000 bytes/s data rate
 
 static pthread_mutex_t mavlink_module_mutex = PTHREAD_MUTEX_INITIALIZER;
+#ifdef CONFIG_NET_CDCNCM
+// Composite USB can launch serial and UDP concurrently. Serialize their CLI
+// startup and the shared singleton initialization without holding the module
+// lock needed by the new MAVLink task.
+static pthread_mutex_t mavlink_start_mutex = PTHREAD_MUTEX_INITIALIZER;
+#endif
 static pthread_mutex_t mavlink_event_buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static px4::atomic<int> mavlink_instance_count {0};
 
@@ -449,6 +456,11 @@ Mavlink::get_instance_for_device(const char *device_name)
 }
 
 #ifdef MAVLINK_UDP
+extern "C" bool mavlink_network_port_exists(unsigned long port)
+{
+	return Mavlink::get_instance_for_network_port(port) != nullptr;
+}
+
 Mavlink *
 Mavlink::get_instance_for_network_port(unsigned long port)
 {
@@ -3238,6 +3250,9 @@ int Mavlink::start_helper(int argc, char *argv[])
 int
 Mavlink::start(int argc, char *argv[])
 {
+#ifdef CONFIG_NET_CDCNCM
+	LockGuard start_guard {mavlink_start_mutex};
+#endif
 	MavlinkULog::initialize();
 	MavlinkCommandSender::initialize();
 
