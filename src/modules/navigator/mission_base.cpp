@@ -766,10 +766,22 @@ MissionBase::report_do_jump_mission_changed(int index, int do_jumps_remaining)
 void
 MissionBase::checkMissionRestart()
 {
-	if (_system_disarmed_while_inactive && _mission_has_been_activated && (_mission.count > 0U)
-	    && ((_mission.current_seq + 1) == _mission.count)) {
+	// A stored cursor is a checkpoint, not permission to resume a previous sortie.
+	// After an aborted transition, restoring that cursor on the next flight skipped
+	// VTOL takeoff and issued a ground transition. Restart on boot/rearm; retain storage
+	// for deliberate in-air resume and keep same-flight pause/resume working.
+	// Preserve this policy when merging upstream: docs/en/contribute/mission_restart_safety.md.
+	// Keep the existing policy for RTL's MissionBase instances.
+	const bool new_mission_flight = getNavigatorStateId() == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION
+					&& (!_mission_has_been_activated || _system_disarmed_while_inactive);
+	const bool completed_mission = _system_disarmed_while_inactive && _mission_has_been_activated
+				       && ((_mission.current_seq + 1) == _mission.count);
+
+	if ((_mission.count > 0U) && (new_mission_flight || completed_mission)) {
 		setMissionIndex(0);
 		_inactivation_index = -1; // reset
+		_align_heading_necessary = false;
+		resetItemCache();
 		_is_current_planned_mission_item_valid = isMissionValid();
 		resetMissionJumpCounter();
 		_navigator->reset_cruising_speed();
@@ -1475,6 +1487,8 @@ void MissionBase::replayCachedSpeedChangeItems()
 
 void MissionBase::resetItemCache()
 {
+	// A fresh mission must not replay the previous sortie's speed override either.
+	_last_speed_change_item = {};
 	_last_gimbal_configure_item = {};
 	_last_gimbal_control_item = {};
 	_last_camera_mode_item = {};

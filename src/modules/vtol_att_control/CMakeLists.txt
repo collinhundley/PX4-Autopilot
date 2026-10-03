@@ -46,6 +46,7 @@ px4_add_module(
 	)
 
 if(CONFIG_MODULES_FW_RATE_CONTROL AND CONFIG_MODULES_FW_ATT_CONTROL AND CONFIG_MODULES_MC_RATE_CONTROL)
+	px4_add_functional_gtest(SRC VtolGroundTransitionTest.cpp LINKLIBS modules__vtol_att_control)
 	px4_add_functional_gtest(SRC TailsitterParametersTest.cpp LINKLIBS modules__vtol_att_control)
 	px4_add_functional_gtest(SRC TailsitterHandoffTest.cpp LINKLIBS modules__vtol_att_control modules__fw_rate_control modules__fw_att_control modules__mc_rate_control)
 endif()

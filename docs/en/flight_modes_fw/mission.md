@@ -45,14 +45,17 @@ At high level all vehicle types behave in the same way when MISSION mode is enga
    One implication is that if you change the current mission command to 1 this will not "fully restart" the mission.
    :::
 
-1. The mission will only reset when the vehicle is disarmed or when a new mission is uploaded.
+1. The first Mission entry after a reboot or disarm/arm cycle starts from the first item and resets execution state, including loop counters.
+   The stored mission and interrupted position are retained until subsequently updated.
+   To deliberately start at a later item, take off first and send `MAV_CMD_MISSION_START` with its zero-based index in parameter 1.
+   A nonzero start item is rejected while disarmed or landed; selecting a waypoint alone does not override the fresh-start policy.
 
    :::tip
    To automatically disarm the vehicle after it lands, in _QGroundControl_ go to [Vehicle Setup > Safety](https://docs.qgroundcontrol.com/master/en/qgc-user-guide/setup_view/safety.html), navigate to _Land Mode Settings_ and check the box labeled _Disarm after_.
    Enter the time to wait after landing before disarming the vehicle.
    :::
 
-Missions can be paused by switching out of mission mode to any other mode (such as [Hold mode](../flight_modes_fw/hold.md) or [Position mode](../flight_modes_fw/position.md)), and resumed by switching back to mission mode.
+Within the same armed flight, missions can be paused by switching out of mission mode to any other mode (such as [Hold mode](../flight_modes_fw/hold.md) or [Position mode](../flight_modes_fw/position.md)), and resumed by switching back to mission mode.
 If the vehicle was not capturing images when it was paused, on resuming it will head from its _current position_ towards the same waypoint as it as was heading towards originally.
 If the vehicle was capturing images (has camera trigger items) it will instead head from its current position towards the last waypoint it traveled through (before pausing), and then retrace its path at the same speed and with the same camera triggering behaviour.
 This ensures that in survey/camera missions the planned path is captured.

@@ -166,9 +166,12 @@ void VtolType::update_transition_state()
 
 bool VtolType::isFrontTransitionCompleted()
 {
-	bool ret = isFrontTransitionCompletedBase();
-
-	return ret || can_transition_on_ground();
+	// Disarmed mode changes are useful for ground checks. An armed vehicle must
+	// actually be flying before handing control to the fixed-wing controllers.
+	// The former "disarmed OR landed" shortcut completed a resumed mission's ground
+	// transition in about 5 ms. Landed must also block normal completion criteria.
+	// Preserve this guard: docs/en/contribute/mission_restart_safety.md.
+	return !_v_control_mode->flag_armed || (!_land_detected->landed && isFrontTransitionCompletedBase());
 }
 
 bool VtolType::isFrontTransitionCompletedBase()
@@ -194,6 +197,8 @@ bool VtolType::isFrontTransitionCompletedBase()
 
 bool VtolType::can_transition_on_ground()
 {
+	// Retain the ground shortcut for back-transition to MC. Do not use it for
+	// front-transition completion: being landed is never permission for armed FW flight.
 	return !_v_control_mode->flag_armed || _land_detected->landed;
 }
 

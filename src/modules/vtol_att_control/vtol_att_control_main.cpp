@@ -132,6 +132,14 @@ void VtolAttitudeControl::action_request_poll()
 				break;
 
 			case action_request_s::ACTION_VTOL_TRANSITION_TO_FIXEDWING:
+
+				// RC requests bypass vehicle_cmd_poll(), so enforce the same ground guard here.
+				if (_vehicle_control_mode.flag_armed && _land_detected.landed) {
+					events::send(events::ID("vtol_transition_ground_denied"), events::Log::Warning,
+						     "Fixed-wing transition denied: vehicle is landed");
+					break;
+				}
+
 				_transition_command = vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW;
 				_immediate_transition = false;
 
@@ -157,9 +165,12 @@ void VtolAttitudeControl::vehicle_cmd_poll()
 
 			const int transition_command_param1 = static_cast<int>(lround(vehicle_command.param1));
 
-			// deny transition from MC to FW in Takeoff, Land, RTL and Orbit
+			// Block initiation as well as completion: a normal transition can already
+			// command pitch/thrust on the ground. This includes internal mission commands,
+			// regardless of from_external. See docs/en/contribute/mission_restart_safety.md.
 			if (transition_command_param1 == vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW &&
-			    (_vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_TAKEOFF
+			    ((_vehicle_control_mode.flag_armed && _land_detected.landed)
+			     || _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_TAKEOFF
 			     || _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND
 			     || _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
 			     ||  _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_ORBIT)) {
@@ -400,6 +411,14 @@ VtolAttitudeControl::Run()
 		vehicle_status_poll();
 		action_request_poll();
 		vehicle_cmd_poll();
+
+		// Also discard a request latched before arming. Do not defer it until liftoff.
+		// Otherwise a disarmed ground check could become an unexpected armed transition.
+		if (_vehicle_control_mode.flag_armed && _land_detected.landed
+		    && current_vtol_mode != mode::FIXED_WING && is_fixed_wing_requested()) {
+			_transition_command = vtol_vehicle_status_s::VEHICLE_VTOL_STATE_MC;
+			_immediate_transition = false;
+		}
 
 		vehicle_air_data_s air_data;
 

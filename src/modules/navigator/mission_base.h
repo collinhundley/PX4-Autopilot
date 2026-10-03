@@ -257,6 +257,14 @@ protected:
 	 *
 	 */
 	void resetMissionJumpCounter();
+
+	/**
+	 * @brief Check if a climb is necessary to align with mission altitude prior to starting the mission
+	 *
+	 * @param mission_item_index The index of the mission item to check if a climb is necessary
+	 */
+	void checkClimbRequired(int32_t mission_item_index);
+
 	/**
 	 * @brief Get the Non Jump Mission Item
 	 *
@@ -563,13 +571,6 @@ private:
 	 * Check for parameter changes and update them if needed.
 	 */
 	void parameters_update();
-
-	/**
-	 * @brief Check if a climb is necessary to align with mission altitude prior to starting the mission
-	 *
-	 * @param mission_item_index The index of the mission item to check if a climb is necessary
-	 */
-	void checkClimbRequired(int32_t mission_item_index);
 
 	/**
 	 * @brief check if relevant data in the new mission have changed.

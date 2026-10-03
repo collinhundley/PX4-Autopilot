@@ -150,6 +150,8 @@ public:
 	float get_calibrated_airspeed() { return _calibrated_airspeed; }
 
 private:
+	friend class VtolGroundTransitionTest;
+
 	void Run() override;
 	uORB::SubscriptionCallbackWorkItem _vehicle_torque_setpoint_virtual_fw_sub{this, ORB_ID(vehicle_torque_setpoint_virtual_fw)};
 	uORB::SubscriptionCallbackWorkItem _vehicle_torque_setpoint_virtual_mc_sub{this, ORB_ID(vehicle_torque_setpoint_virtual_mc)};

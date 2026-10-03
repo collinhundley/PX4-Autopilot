@@ -95,11 +95,24 @@ Mission::on_activation()
 bool
 Mission::set_current_mission_index(uint16_t index)
 {
-	if (index == _mission.current_seq) {
-		return true;
+	_vehicle_status_sub.update();
+	_land_detected_sub.update();
+
+	// Cross-flight resume is an explicit in-air operation. Ground starts must
+	// execute the takeoff sequence, including when the requested index is unchanged.
+	// Validate here as well as in Commander, before accepting the index as pilot intent.
+	if (index > 0 && (_vehicle_status_sub.get().arming_state != vehicle_status_s::ARMING_STATE_ARMED
+			  || _land_detected_sub.get().landed)) {
+		return false;
 	}
 
 	if (_navigator->get_mission_result()->valid && (index < _mission.count)) {
+		// Reset loops before resolving item zero: it may itself be a DO_JUMP.
+		if (index == 0) {
+			resetMissionJumpCounter();
+			resetItemCache();
+		}
+
 		if (goToItem(index, MissionTraversalType::FollowMissionControlFlow) != PX4_OK) {
 			// Keep the old mission index (it was not updated by the interface) and report back.
 			return false;
@@ -107,10 +120,7 @@ Mission::set_current_mission_index(uint16_t index)
 
 		_is_current_planned_mission_item_valid = true;
 
-		// we start from the first item so can reset the cache
-		if (_mission.current_seq == 0) {
-			resetItemCache();
-		}
+		checkClimbRequired(_mission.current_seq);
 
 		// update mission items if already in active mission
 		if (isActive()) {
@@ -120,8 +130,11 @@ Mission::set_current_mission_index(uint16_t index)
 			set_mission_items();
 		}
 
-		// User has actively set new index, reset.
+		// Honour this validated, explicit start for this arming cycle only. The next
+		// disarm must restore the default restart policy, even if the index was unchanged.
 		_inactivation_index = -1;
+		_mission_has_been_activated = true;
+		_system_disarmed_while_inactive = false;
 
 		return true;
 	}
@@ -198,7 +211,16 @@ void Mission::setActiveMissionItems()
 		}
 	}
 
-	if (mission_item_contains_position(_mission_item)) {
+	// A resumed front-transition item needs the same climb prerequisite as a
+	// position item; otherwise its command would execute before handleTakeoff().
+	// Rejecting landed transitions alone cannot protect a resume just above the ground.
+	const bool transition_needs_climb = _mission_item.nav_cmd == NAV_CMD_DO_VTOL_TRANSITION
+					    && PX4_ISFINITE(_mission_item.params[0])
+					    && static_cast<int>(lroundf(_mission_item.params[0])) == vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW
+					    && _vehicle_status_sub.get().vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING
+					    && PX4_ISFINITE(_mission_init_climb_altitude_amsl);
+
+	if (mission_item_contains_position(_mission_item) || transition_needs_climb) {
 
 		handleTakeoff(new_work_item_type, next_mission_items, num_found_items);
 

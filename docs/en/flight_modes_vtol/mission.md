@@ -13,6 +13,23 @@ For more information see the specific docs for each mode:
 
 The following sections outline mission mode behaviour that is VTOL specific.
 
+## Restart And Resume
+
+After a reboot or disarm/arm cycle, entering Mission starts execution at the first mission item, even if an interrupted mission position remains stored.
+Switching away from Mission and back during the same armed flight continues the mission.
+
+To deliberately start at a later item after a new arming cycle, first take off and establish a suitable position, then send `MAV_CMD_MISSION_START` with the requested zero-based item index in parameter 1.
+Starting at a nonzero item while disarmed or landed is rejected.
+Selecting a waypoint alone does not override the fresh-start policy for the first Mission entry after rearming.
+Resume plans rebuilt and uploaded by a ground station can start at item 0 with their own takeoff sequence.
+
+An armed, landed VTOL rejects forward-transition requests from both RC and mission commands.
+Rejected requests are discarded rather than deferred until takeoff.
+Immediate forward mode changes remain available while disarmed for ground checks.
+An airborne multicopter resuming at a forward-transition item must first complete any required climb to the following position item's altitude.
+
+For the incident that motivated these local changes, implementation rationale, and requirements when merging upstream, see [Mission Restart And VTOL Transition Safety](../contribute/mission_restart_safety.md).
+
 ## Mission Commands
 
 The following VTOL-specific commands are as defined in the MAVLink specification.

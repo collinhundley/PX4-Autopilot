@@ -1269,6 +1269,16 @@ Commander::handle_command(const vehicle_command_s &cmd)
 
 			cmd_result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED;
 
+			// Reject skipping takeoff before changing mode or arming. Navigator also
+			// validates the index, but its rejection must not leave a ground vehicle armed.
+			// See docs/en/contribute/mission_restart_safety.md for the resume policy.
+			if (PX4_ISFINITE(cmd.param1) && cmd.param1 > 0.f
+			    && (!isArmed() || _vehicle_land_detected.landed)) {
+				events::send(events::ID("commander_mission_resume_ground_denied"), events::Log::Warning,
+					     "Mission resume denied: take off before selecting a later item");
+				break;
+			}
+
 			// check if current mission and first item are valid
 			if (!_failsafe_flags.auto_mission_missing) {
 
