@@ -139,13 +139,15 @@ int service_task(int, char *[])
 			// A DHCP failure still permits a manually addressed host using UDP.
 			char mode[12];
 			snprintf(mode, sizeof(mode), "%d", mavlink_mode.load());
+			// UDP requires explicit FTP enablement for files and firmware metadata.
+			// USB serial enables it automatically, which can mask this on a Mac.
 			char *argv[] {(char *)"mavlink", (char *)"start", (char *)"-u", (char *)Port,
 				      (char *)"-o", (char *)Port, (char *)"-t", (char *)HostAddress,
-				      (char *)"-m", mode, (char *)"-r", (char *)"100000", (char *)"-w", nullptr
+				      (char *)"-m", mode, (char *)"-r", (char *)"100000", (char *)"-w", (char *)"-x", nullptr
 				     };
 			udp_owned.store(true);
 
-			if (mavlink_main(13, argv) != 0) {
+			if (mavlink_main(static_cast<int>(sizeof(argv) / sizeof(argv[0])) - 1, argv) != 0) {
 				PX4_ERR("USB UDP startup unconfirmed; retaining ownership");
 			}
 		}

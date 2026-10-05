@@ -60,7 +60,9 @@ static uint8_t test_flags = IFF_UP | IFF_RUNNING;
 static int px4_task_spawn_cmd(const char *, int, int, int, test_entry_t entry, char *[])
 {
 	assert(!test_pending_task);
+
 	if (test_spawn_fail) { return -1; }
+
 	test_pending_task = entry;
 	return 123;
 }
@@ -69,7 +71,9 @@ static int boardctl(int command, uintptr_t arg)
 {
 	assert(command == BOARDIOC_USBDEV_CONTROL);
 	auto *ctrl = reinterpret_cast<boardioc_usbdev_ctrl_s *>(arg);
+
 	if (ctrl->action == BOARDIOC_USBDEV_CONNECT) { *ctrl->handle = ctrl; }
+
 	return 0;
 }
 
@@ -93,24 +97,35 @@ static int dhcpd_stop() { ++test_dhcp_stops; return test_dhcp_error; }
 extern "C" int mavlink_main(int argc, char *argv[])
 {
 	if (!strcmp(argv[1], "start")) {
-		assert(argc == 13 && !strcmp(argv[2], "-u") && !strcmp(argv[3], "14550"));
+		assert(argc == 14 && !strcmp(argv[2], "-u") && !strcmp(argv[3], "14550"));
 		assert(!strcmp(argv[4], "-o") && !strcmp(argv[5], "14550"));
 		assert(!strcmp(argv[6], "-t") && !strcmp(argv[7], "192.168.203.2"));
 		assert(!strcmp(argv[10], "-r") && !strcmp(argv[11], "100000") && !strcmp(argv[12], "-w"));
+		// Metadata and file browsing require FTP on the UDP instance.
+		assert(!strcmp(argv[13], "-x") && argv[argc] == nullptr);
 		++test_starts;
+
 		if (test_delayed_start) { return -1; }
+
 		test_port_present = true;
 		return 0;
 	}
+
 	assert(argc == 4 && !strcmp(argv[1], "stop"));
 	++test_stops;
+
 	if (test_stop_fail) { return -1; }
+
 	if (!strcmp(argv[2], "-u")) {
 		assert(!strcmp(argv[3], "14550"));
+
 		if (!test_port_present) { return -1; }
+
 		test_port_present = false;
+
 	} else {
 		assert(!strcmp(argv[2], "-d") && !strcmp(argv[3], "/dev/ttyACM0"));
 	}
+
 	return 0;
 }
