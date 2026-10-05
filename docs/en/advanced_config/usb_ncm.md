@@ -36,6 +36,7 @@ ECM, RNDIS, MBIM, TCP, IPv6, DNS resolution and routing are not enabled for this
 | Streams | Existing `USB_MAV_MODE` |
 | Initial transmit limit | `100000` bytes/second |
 | Start transmitting | After receiving the app's first MAVLink message |
+| MAVFTP | Enabled on the UDP instance for file transfers and firmware metadata |
 
 The foreground iOS app should use `Network.framework` UDP sockets on the wired Ethernet interface, bind local port 14550 and send MAVLink heartbeats to `192.168.203.1:14550`.
 Send heartbeats periodically so startup remains reliable if DHCP or firmware services are still starting when the first packet is sent.
@@ -90,7 +91,8 @@ It preserves the pinned NuttX SRXL2 changes and does not import the newer networ
 The adaptation validates complete NTBs before dispatch, separates interrupt/TX request ownership, submits EP0 replies through the composite driver, and reasserts software connection after reset.
 The NuttX apps change adds bounded DHCP daemon lifecycle operations and validates received DHCP option boundaries.
 Both submodules must accompany the PX4 changes.
-Before distributing the PX4 branch, publish the dependency commits to accessible forks, verify the configured submodule URLs can fetch them, and complete the remaining validation.
+The configured submodule URLs point to the [NuttX fork](https://github.com/collinhundley/NuttX) and [NuttX apps fork](https://github.com/collinhundley/NuttX-apps), with the pinned dependency commits published on their `main` branches.
+Complete the remaining hardware validation before release.
 
 Build using the repository's macOS Docker workflow with image `px4io/px4-dev:v1.17.0`.
 After changing between NuttX configurations, clean generated NuttX libraries as well as the selected CMake build outputs.
@@ -120,9 +122,10 @@ Existing OSD flight features and the linker flash region are unchanged.
 
 The bench build was made on `feat/usb-ncm`, based on PX4 `4f7a87b2f758daf07e3bafa9bbee3e4315ea2a54`, with local NuttX and NuttX apps changes.
 The bench build's dependency bases are NuttX `c7d90a1b5ff3adb7e6485f4607dbee078e14a458` and NuttX apps `e37940d8535f603a16b8f6f21c21edaf584218aa`.
-The current source checkpoint pins the local NuttX commit `08fa343b1e` and NuttX apps commit `4e972bf36`, capturing those tested changes.
-These dependency commits are not yet published; the physical feasibility gate remains open pending iPhone MAVLink testing.
+The current source checkpoint pins NuttX commit `08fa343b1e` and NuttX apps commit `4e972bf36`, capturing those tested changes.
+These dependency commits were published on 2026-10-05; the physical feasibility gate remains open pending iPhone MAVLink testing.
 The source snapshot and build logs are saved with the bench artifact; the base commit alone does not reproduce a dirty build.
+The measurements below predate the subsequent fix enabling MAVFTP on the UDP instance.
 
 | Measurement | Fresh Baseline | Composite Build |
 | --- | ---: | ---: |
