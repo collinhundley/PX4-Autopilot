@@ -304,7 +304,10 @@ FixedWingModeManager::get_mission_airspeed_setpoint(float cruising_speed)
 
 	// Always use throttle, independently of the manual Position/Altitude stick configuration.
 	// Derive a temporary target without modifying the mission's commanded cruising speed.
-	return math::interpolateNXY(_sticks.getThrottleZeroCentered(),
+	// The parameter is the half-width in percentage points of full throttle travel.
+	const float throttle = math::deadzone(_sticks.getThrottleZeroCentered(), _param_fw_mis_thr_dz.get() / 50.f);
+	_airspeed_override_active = fabsf(throttle) > 0.f;
+	return math::interpolateNXY(throttle,
 	{-1.f, 0.f, 1.f},
 	{_param_fw_airspd_min.get(), base_airspeed, _param_fw_airspd_max.get()});
 }
@@ -2288,6 +2291,7 @@ FixedWingModeManager::Run()
 
 		int8_t old_landing_gear_position = _new_landing_gear_position;
 		_new_landing_gear_position = landing_gear_s::GEAR_KEEP; // is overwritten in Takeoff and Land
+		_airspeed_override_active = false; // Only set when the Mission throttle mapping is actually used.
 
 		switch (_control_mode_current) {
 		case FW_POSCTRL_MODE_AUTO: {
@@ -2356,6 +2360,11 @@ FixedWingModeManager::Run()
 				break;
 			}
 		}
+
+		fixed_wing_airspeed_status_s airspeed_status{};
+		airspeed_status.timestamp = hrt_absolute_time();
+		airspeed_status.airspeed_override_active = _airspeed_override_active;
+		_airspeed_status_pub.publish(airspeed_status);
 
 		if (_control_mode_current != FW_POSCTRL_MODE_OTHER) {
 			_ctrl_configuration_handler.update(now);

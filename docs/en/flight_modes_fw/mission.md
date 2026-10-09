@@ -81,14 +81,23 @@ For more information about mission planning, see:
 Set [FW_MIS_THR_NUDGE](../advanced_config/parameter_reference.md#FW_MIS_THR_NUDGE) to `1` to adjust airspeed with the throttle stick while remaining in Mission mode.
 This is disabled by default and applies to fixed-wing aircraft and VTOLs flying in fixed-wing mode.
 
-- At centred throttle, the target is the latest mission airspeed command, or [FW_AIRSPD_TRIM](../advanced_config/parameter_reference.md#FW_AIRSPD_TRIM) if no speed is set.
-- Moving the throttle down interpolates towards [FW_AIRSPD_MIN](../advanced_config/parameter_reference.md#FW_AIRSPD_MIN) at the bottom of its travel.
-- Moving the throttle up interpolates towards [FW_AIRSPD_MAX](../advanced_config/parameter_reference.md#FW_AIRSPD_MAX) at the top of its travel.
+- Within the centre deadband (47–53% throttle by default), the target is the latest mission airspeed command, or [FW_AIRSPD_TRIM](../advanced_config/parameter_reference.md#FW_AIRSPD_TRIM) if no speed is set.
+- Moving below the deadband interpolates towards [FW_AIRSPD_MIN](../advanced_config/parameter_reference.md#FW_AIRSPD_MIN) at the bottom of stick travel.
+- Moving above the deadband interpolates towards [FW_AIRSPD_MAX](../advanced_config/parameter_reference.md#FW_AIRSPD_MAX) at the top of stick travel.
+
+[FW_MIS_THR_DZ](../advanced_config/parameter_reference.md#FW_MIS_THR_DZ) sets the deadband half-width in percentage points of full throttle travel.
+Its default of `3` holds the reference from 47% through 53%, including 48% throttle.
+Set it to `0` to disable the deadband.
+The mapping is continuous at both edges and retains the same minimum and maximum endpoints.
+This parameter only affects Mission throttle nudging.
 
 The override applies to waypoint and loiter flight and does not overwrite the mission's commanded speed.
 New speed commands update the centre reference immediately, even while the stick is deflected.
 The throttle stick is always used, regardless of [FW_POS_STK_CONF](../advanced_config/parameter_reference.md#FW_POS_STK_CONF).
 The controller's existing airspeed limits, including minimum speed increases required by turns and lateral guidance, still apply.
+The optional [OSD airspeed-setpoint item](../peripherals/osd.md) displays `OVR` beside the target while Mission throttle nudging is active outside the deadband.
+Returning inside the deadband clears `OVR`, even while the controller is still slewing back to the reference speed.
+Speed commands and controller limits alone do not activate the marker.
 
 Takeoff, landing (including early landing configuration in the descent loiter and landing abort), VTOL transitions and other flight modes retain their normal airspeed behaviour.
 If manual control input becomes invalid, the normal mission airspeed target is restored; configured RC-loss failsafe actions still apply.

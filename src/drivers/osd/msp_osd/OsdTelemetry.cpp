@@ -160,6 +160,10 @@ void OsdTelemetryCore::update(uint64_t now, const Samples &s, const Settings &se
 		    && std::isfinite(s.tecs.equivalent_airspeed_sp) && s.tecs.equivalent_airspeed_sp > 0.f) {
 			// Use the controller target after airspeed limits and slew limiting, not measured speed or stick position.
 			_data.airspeed_setpoint_m_s = s.tecs.equivalent_airspeed_sp;
+			_data.airspeed_override_active = s.status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION
+							 && fresh(now, s.airspeed_status.timestamp, SECOND_US / 2)
+							 && s.airspeed_status.timestamp >= s.status.nav_state_timestamp
+							 && s.airspeed_status.airspeed_override_active;
 		}
 
 		_data.armed = s.status.arming_state == vehicle_status_s::ARMING_STATE_ARMED;
@@ -327,6 +331,7 @@ void OsdTelemetry::update(uint64_t now, const Settings &settings)
 	_battery_sub.update(&_samples.battery);
 	_airspeed_sub.update(&_samples.airspeed);
 	_tecs_sub.update(&_samples.tecs);
+	_airspeed_status_sub.update(&_samples.airspeed_status);
 	_position_sub.update(&_samples.position);
 	_global_sub.update(&_samples.global);
 	_home_sub.update(&_samples.home);

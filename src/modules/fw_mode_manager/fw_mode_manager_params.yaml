@@ -368,10 +368,10 @@ parameters:
         long: |-
           Enable throttle-stick airspeed nudging without leaving Mission mode.
           Applies to fixed-wing waypoint and loiter flight, including VTOLs in fixed-wing mode.
-          At 50% throttle, the target is the latest commanded mission airspeed, or FW_AIRSPD_TRIM if none is
-          set.
-          Below centre, the target decreases linearly to FW_AIRSPD_MIN at minimum stick; above centre, it
-          increases linearly to FW_AIRSPD_MAX at maximum stick.
+          Within the centre deadband configured by FW_MIS_THR_DZ (47-53% throttle by default), the target is
+          the latest commanded mission airspeed, or FW_AIRSPD_TRIM if none is set.
+          Below the deadband, the target decreases linearly to FW_AIRSPD_MIN at minimum stick; above it,
+          the target increases linearly to FW_AIRSPD_MAX at maximum stick.
           New mission or MAVLink speed commands update the centre reference even while the stick is deflected.
           Nudging does not overwrite the commanded speed: returning to centre restores that reference.
           The autopilot continues to control throttle and pitch, and existing airspeed limits still apply.
@@ -382,6 +382,23 @@ parameters:
           Always uses the throttle stick, regardless of FW_POS_STK_CONF.
       type: boolean
       default: 0
+    FW_MIS_THR_DZ:
+      description:
+        short: Mission throttle airspeed deadband half-width
+        long: |-
+          Half-width of the centre deadband for FW_MIS_THR_NUDGE, in percentage points of full throttle travel.
+          The default of 3 holds the commanded mission airspeed (or FW_AIRSPD_TRIM) from 47% to 53% throttle.
+          Outside this region, the remaining stick travel is mapped linearly to FW_AIRSPD_MIN or FW_AIRSPD_MAX,
+          with no step at the deadband edge. A value of 0 disables the deadband.
+          Only affects Mission throttle nudging, including VTOL fixed-wing flight.
+          The OSD airspeed target shows OVR while this override is active outside the deadband.
+      type: float
+      default: 3.0
+      unit: '%'
+      min: 0
+      max: 25
+      decimal: 1
+      increment: 0.5
     FW_POS_STK_CONF:
       description:
         short: Custom stick configuration

@@ -51,6 +51,11 @@ This fallback affects the display only; it does not declare the home bearing val
 The airspeed-setpoint item shows `--` when its source is missing, invalid, more than 0.5 seconds old, or predates the current flight mode.
 It also shows `--` in other modes, during VTOL hover or transitions, or when vehicle status is stale.
 It does not substitute measured speed or trim speed for an unavailable controller target.
+While Mission throttle nudging is active outside the [FW_MIS_THR_DZ](../advanced_config/parameter_reference.md#FW_MIS_THR_DZ) deadband, `OVR` appears immediately before the target value, alongside the airspeed icon in INAV font mode.
+This compact indication stays within the space between throttle and the default battery group.
+The marker follows the flight-mode manager's override status; speed-command changes and controller-imposed limits alone do not activate it.
+It clears when the stick returns to the deadband, nudging is disabled or unavailable, or the override status is missing, stale or predates the current mode.
+The marker only applies to Mission throttle nudging; the normal target display remains available in Position and Altitude modes.
 
 Additional fields include total pack voltage, average cell voltage, electrical power, GNSS latitude/longitude and satellite count, RC RSSI percentage, vertical speed, numeric pitch/roll, crosshairs, horizon sidebars and armed/disarmed/failsafe status.
 Arming state appears immediately after flight mode as `ARM` or `DIS`; an appended `!` indicates failsafe. The former PX4 label has been removed, with bit 0 reserved to preserve saved masks.

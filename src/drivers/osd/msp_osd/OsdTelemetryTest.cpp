@@ -782,18 +782,111 @@ TEST_F(OsdTelemetryTest, AdapterConsumesPublishedAirspeedSetpoint)
 	msp_osd::OsdTelemetry adapter;
 	uORB::Publication<vehicle_status_s> status_pub{ORB_ID(vehicle_status)};
 	uORB::Publication<tecs_status_s> tecs_pub{ORB_ID(tecs_status)};
+	uORB::Publication<fixed_wing_airspeed_status_s> airspeed_status_pub{ORB_ID(fixed_wing_airspeed_status)};
 	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
 	samples.status.nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
 	samples.tecs.timestamp = now;
 	samples.tecs.equivalent_airspeed_sp = 22.f;
+	samples.airspeed_status.timestamp = now;
+	samples.airspeed_status.airspeed_override_active = true;
 	ASSERT_TRUE(status_pub.publish(samples.status));
 	ASSERT_TRUE(tecs_pub.publish(samples.tecs));
+	ASSERT_TRUE(airspeed_status_pub.publish(samples.airspeed_status));
 	adapter.update(now, settings);
 	EXPECT_FLOAT_EQ(adapter.data().airspeed_setpoint_m_s, 22.f);
+	EXPECT_TRUE(adapter.data().airspeed_override_active);
 	samples.tecs.equivalent_airspeed_sp = 24.f;
 	ASSERT_TRUE(tecs_pub.publish(samples.tecs));
 	adapter.update(now, settings);
 	EXPECT_FLOAT_EQ(adapter.data().airspeed_setpoint_m_s, 24.f);
+	samples.airspeed_status.airspeed_override_active = false;
+	ASSERT_TRUE(airspeed_status_pub.publish(samples.airspeed_status));
+	adapter.update(now, settings);
+	EXPECT_FALSE(adapter.data().airspeed_override_active);
 	adapter.update(now + SECOND, settings);
 	EXPECT_TRUE(std::isnan(adapter.data().airspeed_setpoint_m_s));
+	EXPECT_FALSE(adapter.data().airspeed_override_active);
+}
+
+TEST_F(OsdTelemetryTest, OverrideRequiresExplicitFreshMissionStatus)
+{
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
+	samples.status.nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+	samples.status.nav_state_timestamp = now - SECOND;
+	samples.tecs.timestamp = now;
+	samples.tecs.equivalent_airspeed_sp = 22.f;
+	samples.airspeed_status.timestamp = now;
+	update();
+	EXPECT_FALSE(core.data().airspeed_override_active);
+	samples.tecs.equivalent_airspeed_sp = 26.f; // Commands, turn limits and slew alone are not an override.
+	update();
+	EXPECT_FALSE(core.data().airspeed_override_active);
+	samples.airspeed_status.airspeed_override_active = true;
+	update();
+	ASSERT_TRUE(core.data().airspeed_override_active);
+	samples.status.is_vtol = true;
+	update();
+	EXPECT_TRUE(core.data().airspeed_override_active);
+
+	for (uint64_t timestamp : {uint64_t(0), now + 1, now - SECOND / 2 - 1}) {
+		samples.airspeed_status.timestamp = timestamp;
+		update();
+		EXPECT_FALSE(core.data().airspeed_override_active);
+		EXPECT_FLOAT_EQ(core.data().airspeed_setpoint_m_s, 26.f);
+	}
+
+	samples.airspeed_status.timestamp = now - 1;
+	samples.status.nav_state_timestamp = now;
+	update();
+	EXPECT_FALSE(core.data().airspeed_override_active);
+	samples.airspeed_status.timestamp = now;
+	update();
+	EXPECT_TRUE(core.data().airspeed_override_active);
+	samples.airspeed_status.airspeed_override_active = false;
+	update();
+	EXPECT_FALSE(core.data().airspeed_override_active);
+}
+
+TEST_F(OsdTelemetryTest, OverrideClearsWithModeTransitionOrUnavailableTarget)
+{
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
+	samples.status.nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+	samples.tecs.timestamp = samples.airspeed_status.timestamp = now;
+	samples.tecs.equivalent_airspeed_sp = 22.f;
+	samples.airspeed_status.airspeed_override_active = true;
+	update();
+	ASSERT_TRUE(core.data().airspeed_override_active);
+
+	for (uint8_t mode : {
+		     vehicle_status_s::NAVIGATION_STATE_POSCTL, vehicle_status_s::NAVIGATION_STATE_ALTCTL,
+		     vehicle_status_s::NAVIGATION_STATE_AUTO_RTL, vehicle_status_s::NAVIGATION_STATE_MANUAL
+	     }) {
+		samples.status.nav_state = mode;
+		update();
+		EXPECT_FALSE(core.data().airspeed_override_active);
+	}
+
+	samples.status.nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+	samples.status.in_transition_mode = true;
+	update();
+	EXPECT_FALSE(core.data().airspeed_override_active);
+	samples.status.in_transition_mode = false;
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
+	update();
+	EXPECT_FALSE(core.data().airspeed_override_active);
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
+	samples.status.timestamp = now - 3 * SECOND;
+	update();
+	EXPECT_FALSE(core.data().airspeed_override_active);
+	samples.status.timestamp = now;
+	samples.tecs.timestamp = now - SECOND;
+	update();
+	EXPECT_FALSE(core.data().airspeed_override_active);
+	samples.tecs.timestamp = now;
+
+	for (float invalid : {NAN, INFINITY, -1.f, 0.f}) {
+		samples.tecs.equivalent_airspeed_sp = invalid;
+		update();
+		EXPECT_FALSE(core.data().airspeed_override_active);
+	}
 }

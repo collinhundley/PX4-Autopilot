@@ -134,6 +134,7 @@ protected:
 		_control_pub.publish(_control);
 		_local_pub.publish(_local);
 		_manager->Run();
+		EXPECT_TRUE(_airspeed_status_sub.update(&_airspeed_status));
 		return _output_sub.update(&output);
 	}
 
@@ -145,6 +146,7 @@ protected:
 	}
 
 	float storedSpeed() { return _manager->_pos_sp_triplet.current.cruising_speed; }
+	bool overrideActive() { return _airspeed_status.airspeed_override_active; }
 	void abortLanding() { _manager->updateLandingAbortStatus(position_controller_landing_status_s::ABORTED_BY_OPERATOR); }
 
 	void commandSpeed(float speed)
@@ -173,6 +175,8 @@ protected:
 	uORB::Publication<vehicle_command_s> _command_pub{ORB_ID(vehicle_command)};
 	uORB::Publication<failsafe_flags_s> _failsafe_pub{ORB_ID(failsafe_flags)};
 	uORB::Subscription _output_sub{ORB_ID(fixed_wing_longitudinal_setpoint)};
+	uORB::Subscription _airspeed_status_sub{ORB_ID(fixed_wing_airspeed_status)};
+	fixed_wing_airspeed_status_s _airspeed_status{};
 };
 
 TEST_F(MissionAirspeedTest, DisabledByDefaultAndCanBeDisabledInFlight)
@@ -182,24 +186,28 @@ TEST_F(MissionAirspeedTest, DisabledByDefaultAndCanBeDisabledInFlight)
 	EXPECT_EQ(enabled, 0);
 	sticks(1.f);
 	EXPECT_FLOAT_EQ(airspeed(), 18.f);
+	EXPECT_FALSE(overrideActive());
 	mission(NAN);
 	EXPECT_TRUE(std::isnan(airspeed()));
 	parameter("FW_MIS_THR_NUDGE", int32_t(1));
 	EXPECT_FLOAT_EQ(airspeed(), 30.f);
+	EXPECT_TRUE(overrideActive());
 	parameter("FW_MIS_THR_NUDGE", int32_t(0));
 	EXPECT_TRUE(std::isnan(airspeed()));
+	EXPECT_FALSE(overrideActive());
 }
 
 TEST_F(MissionAirspeedTest, MapsThrottleAroundMissionCommandWithoutAccumulating)
 {
 	parameter("FW_MIS_THR_NUDGE", int32_t(1));
-	const float throttle[] = {-1.f, -.5f, 0.f, .5f, 1.f, .5f, .5f, 0.f};
+	const float throttle[] = {-1.f, -.53f, 0.f, .53f, 1.f, .53f, .53f, 0.f};
 	const float expected[] = {10.f, 14.f, 18.f, 24.f, 30.f, 24.f, 24.f, 18.f};
 
 	for (unsigned i = 0; i < sizeof(throttle) / sizeof(throttle[0]); ++i) {
 		sticks(throttle[i]);
 		EXPECT_FLOAT_EQ(airspeed(), expected[i]);
 		EXPECT_FLOAT_EQ(storedSpeed(), 18.f);
+		EXPECT_EQ(overrideActive(), fabsf(throttle[i]) > 0.f);
 	}
 }
 
@@ -211,9 +219,9 @@ TEST_F(MissionAirspeedTest, MissingSpeedUsesTrimAndCommandIsConstrained)
 		mission(unset);
 		sticks(0.f);
 		EXPECT_FLOAT_EQ(airspeed(), 15.f);
-		sticks(-.5f);
+		sticks(-.53f);
 		EXPECT_FLOAT_EQ(airspeed(), 12.5f);
-		sticks(.5f);
+		sticks(.53f);
 		EXPECT_FLOAT_EQ(airspeed(), 22.5f);
 	}
 
@@ -227,13 +235,15 @@ TEST_F(MissionAirspeedTest, MissingSpeedUsesTrimAndCommandIsConstrained)
 TEST_F(MissionAirspeedTest, NewSpeedCommandUpdatesReferenceWhileDeflected)
 {
 	parameter("FW_MIS_THR_NUDGE", int32_t(1));
-	sticks(.5f);
+	sticks(.53f);
 	EXPECT_FLOAT_EQ(airspeed(), 24.f);
 	commandSpeed(22.f);
 	EXPECT_FLOAT_EQ(airspeed(), 26.f);
+	EXPECT_TRUE(overrideActive());
 	EXPECT_FLOAT_EQ(storedSpeed(), 22.f);
 	sticks(0.f);
 	EXPECT_FLOAT_EQ(airspeed(), 22.f);
+	EXPECT_FALSE(overrideActive());
 	// Navigator carries the commanded speed forward to subsequent waypoints.
 	mission(22.f, position_setpoint_s::SETPOINT_TYPE_LOITER);
 	EXPECT_FLOAT_EQ(airspeed(), 22.f);
@@ -248,14 +258,17 @@ TEST_F(MissionAirspeedTest, RcLossAndNonfiniteInputRestoreMissionSpeed)
 	EXPECT_FLOAT_EQ(airspeed(), 30.f);
 	sticks(1.f, false);
 	EXPECT_FLOAT_EQ(airspeed(), 18.f);
+	EXPECT_FALSE(overrideActive());
 	sticks(NAN);
 	EXPECT_FLOAT_EQ(airspeed(), 18.f);
+	EXPECT_FALSE(overrideActive());
 	sticks(1.f);
 	EXPECT_FLOAT_EQ(airspeed(), 30.f);
 	failsafe_flags_s failsafe{};
 	failsafe.manual_control_signal_lost = true;
 	_failsafe_pub.publish(failsafe);
 	EXPECT_FLOAT_EQ(airspeed(), 18.f);
+	EXPECT_FALSE(overrideActive());
 	mission(NAN);
 	EXPECT_TRUE(std::isnan(airspeed()));
 	sticks(0.f);
@@ -273,6 +286,7 @@ TEST_F(MissionAirspeedTest, OtherAutoModesIgnoreThrottle)
 	     }) {
 		_status.nav_state = mode;
 		EXPECT_FLOAT_EQ(airspeed(), 18.f);
+		EXPECT_FALSE(overrideActive());
 	}
 
 	_status.nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
@@ -285,13 +299,16 @@ TEST_F(MissionAirspeedTest, VtolFixedWingOnly)
 	_status.is_vtol = _status.is_vtol_tailsitter = true;
 	sticks(-1.f);
 	EXPECT_FLOAT_EQ(airspeed(), 10.f);
+	EXPECT_TRUE(overrideActive());
 	_status.in_transition_mode = _status.in_transition_to_fw = true;
 	EXPECT_FLOAT_EQ(airspeed(), 18.f);
+	EXPECT_FALSE(overrideActive());
 	_status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
 	EXPECT_FLOAT_EQ(airspeed(), 18.f);
 	_status.in_transition_mode = _status.in_transition_to_fw = false;
 	fixed_wing_longitudinal_setpoint_s output{};
 	EXPECT_FALSE(run(output));
+	EXPECT_FALSE(overrideActive());
 	_status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
 	EXPECT_FLOAT_EQ(airspeed(), 10.f);
 }
@@ -300,7 +317,7 @@ TEST_F(MissionAirspeedTest, MissionAlwaysUsesThrottleAndLoiterIsSupported)
 {
 	parameter("FW_MIS_THR_NUDGE", int32_t(1));
 	parameter("FW_POS_STK_CONF", int32_t(3));
-	sticks(.5f, true, -1.f);
+	sticks(.53f, true, -1.f);
 	mission(18.f, position_setpoint_s::SETPOINT_TYPE_LOITER);
 	EXPECT_FLOAT_EQ(airspeed(), 24.f);
 	_triplet.current.course = .5f;
@@ -324,8 +341,10 @@ TEST_F(MissionAirspeedTest, TakeoffAndLandingRetainDedicatedAirspeeds)
 	sticks(1.f);
 	mission(18.f, position_setpoint_s::SETPOINT_TYPE_TAKEOFF);
 	EXPECT_FLOAT_EQ(airspeed(), 13.f);
+	EXPECT_FALSE(overrideActive());
 	mission(18.f, position_setpoint_s::SETPOINT_TYPE_LAND);
 	EXPECT_FLOAT_EQ(airspeed(), 12.f);
+	EXPECT_FALSE(overrideActive());
 }
 
 TEST_F(MissionAirspeedTest, EarlyLandingConfigurationTakesPriority)
@@ -339,6 +358,7 @@ TEST_F(MissionAirspeedTest, EarlyLandingConfigurationTakesPriority)
 	_triplet.next.type = position_setpoint_s::SETPOINT_TYPE_LAND;
 	mission(18.f, position_setpoint_s::SETPOINT_TYPE_LOITER);
 	EXPECT_FLOAT_EQ(airspeed(), 12.f);
+	EXPECT_FALSE(overrideActive());
 	// Also preserve the existing loiter speed when no explicit landing speed is configured.
 	parameter("FW_LND_AIRSPD", -1.f);
 	EXPECT_FLOAT_EQ(airspeed(), 18.f);
@@ -354,7 +374,69 @@ TEST_F(MissionAirspeedTest, LandingAbortRetainsMissionSpeedUntilClearance)
 	EXPECT_FLOAT_EQ(airspeed(), 30.f);
 	abortLanding();
 	EXPECT_FLOAT_EQ(airspeed(), 18.f);
+	EXPECT_FALSE(overrideActive());
 	_local.z = -150.f;
 	EXPECT_FLOAT_EQ(airspeed(), 18.f);
 	EXPECT_FLOAT_EQ(airspeed(), 30.f);
+	EXPECT_TRUE(overrideActive());
+}
+
+TEST_F(MissionAirspeedTest, DefaultDeadbandHoldsReferenceFrom47To53Percent)
+{
+	parameter("FW_MIS_THR_NUDGE", int32_t(1));
+	float deadband = -1.f;
+	ASSERT_EQ(param_get(param_find("FW_MIS_THR_DZ"), &deadband), 0);
+	EXPECT_FLOAT_EQ(deadband, 3.f);
+
+	for (float speed : {18.f, NAN}) {
+		mission(speed);
+		const float reference = std::isfinite(speed) ? speed : 15.f;
+
+		for (float throttle : {-.06f, -.04f, 0.f, .04f, .06f}) {
+			// Normalized [-1, 1] inputs correspond to 47%, 48%, 50%, 52%, 53% travel.
+			sticks(throttle);
+			EXPECT_FLOAT_EQ(airspeed(), reference);
+			EXPECT_FALSE(overrideActive());
+		}
+
+		for (float throttle : {-.06001f, .06001f}) {
+			sticks(throttle);
+			const float target = airspeed();
+			EXPECT_NEAR(target, reference, .0002f); // Continuous on both sides of the deadband.
+			EXPECT_EQ(target > reference, throttle > 0.f);
+			EXPECT_TRUE(overrideActive());
+		}
+	}
+
+	sticks(-.04f); // A new command at 48% does not activate the override.
+	commandSpeed(22.f);
+	EXPECT_FLOAT_EQ(airspeed(), 22.f);
+	EXPECT_FALSE(overrideActive());
+}
+
+TEST_F(MissionAirspeedTest, DeadbandCanBeChangedOrDisabledWithoutLosingEndpoints)
+{
+	parameter("FW_MIS_THR_NUDGE", int32_t(1));
+
+	for (float deadband : {0.f, 10.f, 25.f}) {
+		parameter("FW_MIS_THR_DZ", deadband);
+		const float edge = deadband / 50.f;
+
+		for (float throttle : {-edge, 0.f, edge}) {
+			sticks(throttle);
+			EXPECT_FLOAT_EQ(airspeed(), 18.f);
+			EXPECT_FALSE(overrideActive());
+		}
+
+		sticks(-(1.f + edge) / 2.f);
+		EXPECT_FLOAT_EQ(airspeed(), 14.f);
+		EXPECT_TRUE(overrideActive());
+		sticks((1.f + edge) / 2.f);
+		EXPECT_FLOAT_EQ(airspeed(), 24.f);
+		EXPECT_TRUE(overrideActive());
+		sticks(-1.f);
+		EXPECT_FLOAT_EQ(airspeed(), 10.f);
+		sticks(1.f);
+		EXPECT_FLOAT_EQ(airspeed(), 30.f);
+	}
 }

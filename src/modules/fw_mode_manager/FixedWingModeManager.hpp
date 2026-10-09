@@ -89,6 +89,7 @@
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/wind.h>
 #include <uORB/topics/orbit_status.h>
+#include <uORB/topics/fixed_wing_airspeed_status.h>
 
 #ifdef CONFIG_FIGURE_OF_EIGHT
 #include "figure_eight/FigureEight.hpp"
@@ -203,6 +204,8 @@ private:
 	uORB::PublicationData<fixed_wing_longitudinal_setpoint_s> _longitudinal_ctrl_sp_pub{ORB_ID(fixed_wing_longitudinal_setpoint)};
 	uORB::Publication<fixed_wing_lateral_guidance_status_s> _fixed_wing_lateral_guidance_status_pub{ORB_ID(fixed_wing_lateral_guidance_status)};
 	uORB::Publication<fixed_wing_runway_control_s> _fixed_wing_runway_control_pub{ORB_ID(fixed_wing_runway_control)};
+	uORB::Publication<fixed_wing_airspeed_status_s> _airspeed_status_pub{ORB_ID(fixed_wing_airspeed_status)};
+	bool _airspeed_override_active{false};
 
 	position_setpoint_triplet_s _pos_sp_triplet{};
 	vehicle_control_mode_s _control_mode{};
@@ -872,6 +875,7 @@ private:
 		(ParamFloat<px4::params::FW_SPOILERS_LND>) _param_fw_spoilers_lnd,
 		(ParamInt<px4::params::FW_POS_STK_CONF>) _param_fw_pos_stk_conf,
 		(ParamBool<px4::params::FW_MIS_THR_NUDGE>) _param_fw_mis_thr_nudge,
+		(ParamFloat<px4::params::FW_MIS_THR_DZ>) _param_fw_mis_thr_dz,
 		(ParamInt<px4::params::FW_GPSF_LT>) _param_nav_gpsf_lt,
 		(ParamFloat<px4::params::FW_GPSF_R>) _param_nav_gpsf_r,
 		(ParamFloat<px4::params::FW_T_SPDWEIGHT>) _param_t_spdweight,

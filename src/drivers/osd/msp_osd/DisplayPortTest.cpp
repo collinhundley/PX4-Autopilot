@@ -919,3 +919,51 @@ TEST(DisplayPort, AirspeedSetpointUsesIconUnitsAndDefaultPositionBesideThrottle)
 		}
 	}
 }
+
+TEST(DisplayPort, AirspeedOverrideMarkerFitsClearsAndMovesWithTarget)
+{
+	for (bool inav : {false, true}) {
+		for (bool imperial : {false, true}) {
+			Capture capture;
+			DisplayPort display(Capture::write, &capture);
+			DisplaySettings settings;
+			settings.symbols = ALL_SYMBOLS;
+			settings.inav_font = inav;
+			settings.imperial = imperial;
+			OsdData data = sample();
+			data.airspeed_override_active = true;
+			data.throttle_percent = 100.f;
+			ASSERT_TRUE(display.render(data, settings));
+			const std::string prefix = inav ? "\x8cOVR " : "OVR ";
+			const char unit = inav ? (imperial ? '\x91' : '\x8f') : (imperial ? '\x9d' : '\x9f');
+			const std::string expected = prefix + (imperial ? "49.2" : "22.0") + unit;
+			EXPECT_EQ(capture.line(19).substr(8, expected.size()), expected);
+			EXPECT_NE(capture.line(19).substr(1, 6).find("100%"), std::string::npos);
+			EXPECT_EQ(capture.screen[19][7], ' ');
+			EXPECT_EQ(capture.line(19).substr(20, 13), "C 25.2V/4.20V");
+
+			data.airspeed_override_active = false;
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_EQ(capture.line(19).find("OVR"), std::string::npos);
+			data.airspeed_override_active = true;
+
+			for (float invalid : {NAN, -1.f, INFINITY, std::numeric_limits<float>::max()}) {
+				data.airspeed_setpoint_m_s = invalid;
+				ASSERT_TRUE(display.render(data, settings));
+				EXPECT_EQ(capture.line(19).find("OVR"), std::string::npos);
+			}
+
+			data.airspeed_setpoint_m_s = 22.f;
+			settings.positions[AIRSPEED_SP] = {3, 12};
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_EQ(capture.line(12).substr(3, expected.size()), expected);
+			EXPECT_EQ(capture.line(19).substr(8, 12), std::string(12, ' '));
+			settings.positions[AIRSPEED_SP] = {50, 19}; // Bounds are respected when the item is clipped.
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_TRUE(capture.valid);
+			settings.symbols &= ~(1u << AIRSPEED_SP);
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_EQ(capture.line(19).find("OVR"), std::string::npos);
+		}
+	}
+}

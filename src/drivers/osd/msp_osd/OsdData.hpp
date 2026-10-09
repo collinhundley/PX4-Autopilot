@@ -32,6 +32,7 @@ struct OsdData {
 	float ground_speed_m_s{NAN};
 	float airspeed_m_s{NAN}; // Validated calibrated airspeed (CAS).
 	float airspeed_setpoint_m_s{NAN}; // Active equivalent/calibrated airspeed target from TECS.
+	bool airspeed_override_active{false}; // Mission throttle nudging, reported by the mode manager.
 	bool airspeed_estimated{false};
 	float altitude_m{NAN};
 	float vertical_speed_m_s{NAN};

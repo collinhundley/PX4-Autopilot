@@ -482,8 +482,15 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 	if (enabled(AIRSPEED) && !speed(position(AIRSPEED, 10), airspeed_prefix,
 					data.airspeed_m_s * speed_scale, speed_unit)) { return false; }
 
-	if (enabled(AIRSPEED_SP) && !number(position(AIRSPEED_SP, 10), _inav_font ? "\xe2>" : "AS>",
-					    data.airspeed_setpoint_m_s * speed_scale, 1, speed_unit, 0.f, 9999.f)) { return false; }
+	if (enabled(AIRSPEED_SP)) {
+		const float airspeed_setpoint = data.airspeed_setpoint_m_s * speed_scale;
+		const bool overridden = data.airspeed_override_active && finite_range(airspeed_setpoint, 0.f, 9999.f)
+					&& airspeed_setpoint > 0.f;
+		// Keep OVR beside the value within the gap between throttle and the default battery group.
+		const char *prefix = overridden ? (_inav_font ? "\xe2OVR " : "OVR ") : (_inav_font ? "\xe2>" : "AS>");
+
+		if (!number(position(AIRSPEED_SP, 12), prefix, airspeed_setpoint, 1, speed_unit, 0.f, 9999.f)) { return false; }
+	}
 
 	if (enabled(ALTITUDE) && !number(position(ALTITUDE, 12), "", data.altitude_m * distance_scale,
 					 0, altitude_unit, -1e7f, 1e7f)) { return false; }

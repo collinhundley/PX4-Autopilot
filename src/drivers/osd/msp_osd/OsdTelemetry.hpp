@@ -6,6 +6,7 @@
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/airspeed_validated.h>
 #include <uORB/topics/battery_status.h>
+#include <uORB/topics/fixed_wing_airspeed_status.h>
 #include <uORB/topics/home_position.h>
 #include <uORB/topics/input_rc.h>
 #include <uORB/topics/mavlink_log.h>
@@ -36,6 +37,7 @@ public:
 		battery_status_s battery{};
 		airspeed_validated_s airspeed{};
 		tecs_status_s tecs{};
+		fixed_wing_airspeed_status_s airspeed_status{};
 		vehicle_local_position_s position{};
 		vehicle_global_position_s global{};
 		home_position_s home{};
@@ -95,6 +97,7 @@ private:
 	uORB::Subscription _battery_sub{ORB_ID(battery_status), 0};
 	uORB::Subscription _airspeed_sub{ORB_ID(airspeed_validated)};
 	uORB::Subscription _tecs_sub{ORB_ID(tecs_status)};
+	uORB::Subscription _airspeed_status_sub{ORB_ID(fixed_wing_airspeed_status)};
 	uORB::Subscription _position_sub{ORB_ID(vehicle_local_position)};
 	uORB::Subscription _global_sub{ORB_ID(vehicle_global_position)};
 	uORB::Subscription _home_sub{ORB_ID(home_position)};
