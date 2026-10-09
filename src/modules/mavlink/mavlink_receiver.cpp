@@ -817,21 +817,20 @@ uint8_t MavlinkReceiver::handle_request_message_command(uint16_t message_id, flo
 	bool stream_found = false;
 	bool message_sent = false;
 
-	// request_message() invokes the stream's send() synchronously, which goes
-	// through the MAVLink helpers and touches the shared per-channel
-	// mavlink_status_t. Hold the channel send lock so we don't race with the
-	// sender thread's own stream sends. Don't hold this across
-	// configure_stream_threadsafe() — that busy-waits for the main Mavlink
-	// thread, which also wants the send lock (would deadlock).
+	// Protect lookup and use together: the sender can delete a stream during
+	// reconfiguration. Release the lock before configure_stream_threadsafe(),
+	// which waits for the sender and would otherwise deadlock.
+	_mavlink.lock_send();
+
 	for (const auto &stream : _mavlink.get_streams()) {
 		if (stream->get_id() == message_id) {
 			stream_found = true;
-			_mavlink.lock_send();
 			message_sent = stream->request_message(param2, param3, param4, param5, param6, param7);
-			_mavlink.unlock_send();
 			break;
 		}
 	}
+
+	_mavlink.unlock_send();
 
 	if (!stream_found) {
 		// If we don't find the stream, we can configure it with rate 0 and then trigger it once.
@@ -841,14 +840,16 @@ uint8_t MavlinkReceiver::handle_request_message_command(uint16_t message_id, flo
 			_mavlink.configure_stream_threadsafe(stream_name, 0.0f);
 
 			// Now we try again to send it.
+			_mavlink.lock_send();
+
 			for (const auto &stream : _mavlink.get_streams()) {
 				if (stream->get_id() == message_id) {
-					_mavlink.lock_send();
 					message_sent = stream->request_message(param2, param3, param4, param5, param6, param7);
-					_mavlink.unlock_send();
 					break;
 				}
 			}
+
+			_mavlink.unlock_send();
 		}
 	}
 
@@ -2456,6 +2457,7 @@ void
 MavlinkReceiver::get_message_interval(int msgId)
 {
 	int interval = -1;
+	_mavlink.lock_send();
 
 	for (const auto &stream : _mavlink.get_streams()) {
 		if (stream->get_id() == msgId) {
@@ -2465,7 +2467,6 @@ MavlinkReceiver::get_message_interval(int msgId)
 	}
 
 	// send back this value...
-	_mavlink.lock_send();
 	mavlink_msg_message_interval_send(_mavlink.get_channel(), msgId, interval);
 	_mavlink.unlock_send();
 }

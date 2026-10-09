@@ -382,6 +382,7 @@ public:
 	 */
 	void			send_protocol_version();
 
+	// Caller must hold lock_send() for the entire traversal and stream use.
 	List<MavlinkStream *> &get_streams() { return _streams; }
 
 	float			get_rate_mult() const { return _rate_mult; }

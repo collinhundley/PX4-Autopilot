@@ -1375,6 +1375,9 @@ Mavlink::send_protocol_version()
 int
 Mavlink::configure_stream(const char *stream_name, const float rate)
 {
+	// Receiver requests and status readers can hold a stream pointer. Keep
+	// insertion, rate changes and deletion under the same lock as stream use.
+	LockGuard send_guard{mavlink_channel_send_mutexes[_instance_id]};
 	PX4_DEBUG("configure_stream(%s, %.3f)", stream_name, (double)rate);
 
 	/* calculate interval in us, -1 means unlimited stream, 0 means disabled */
@@ -1514,6 +1517,7 @@ Mavlink::close_shell()
 void
 Mavlink::update_rate_mult()
 {
+	LockGuard send_guard{mavlink_channel_send_mutexes[_instance_id]};
 	float const_rate = 0.0f;
 	float rate = 0.0f;
 
@@ -2785,7 +2789,10 @@ Mavlink::task_main(int argc, char *argv[])
 	_subscribe_to_stream.store(nullptr);
 
 	/* delete streams */
-	_streams.clear();
+	{
+		LockGuard send_guard{mavlink_channel_send_mutexes[_instance_id]};
+		_streams.clear();
+	}
 
 	if (_uart_fd >= 0) {
 		/* discard all pending data, as close() might block otherwise on NuttX with flow control enabled */
@@ -3431,6 +3438,7 @@ Mavlink::display_status()
 void
 Mavlink::display_status_streams()
 {
+	LockGuard send_guard{mavlink_channel_send_mutexes[_instance_id]};
 	printf("\t%-20s%-16s %s\n", "Name", "Rate Config (current) [Hz]", "Message Size (if active) [B]");
 
 	const float rate_mult = _rate_mult;
