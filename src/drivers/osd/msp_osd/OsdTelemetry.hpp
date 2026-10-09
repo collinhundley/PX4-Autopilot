@@ -10,6 +10,7 @@
 #include <uORB/topics/input_rc.h>
 #include <uORB/topics/mavlink_log.h>
 #include <uORB/topics/sensor_gps.h>
+#include <uORB/topics/tecs_status.h>
 #include <uORB/topics/vehicle_attitude.h>
 #include <uORB/topics/vehicle_global_position.h>
 #include <uORB/topics/vehicle_land_detected.h>
@@ -34,6 +35,7 @@ public:
 	struct Samples {
 		battery_status_s battery{};
 		airspeed_validated_s airspeed{};
+		tecs_status_s tecs{};
 		vehicle_local_position_s position{};
 		vehicle_global_position_s global{};
 		home_position_s home{};
@@ -92,6 +94,7 @@ private:
 	OsdTelemetryCore::Samples _samples;
 	uORB::Subscription _battery_sub{ORB_ID(battery_status), 0};
 	uORB::Subscription _airspeed_sub{ORB_ID(airspeed_validated)};
+	uORB::Subscription _tecs_sub{ORB_ID(tecs_status)};
 	uORB::Subscription _position_sub{ORB_ID(vehicle_local_position)};
 	uORB::Subscription _global_sub{ORB_ID(vehicle_global_position)};
 	uORB::Subscription _home_sub{ORB_ID(home_position)};

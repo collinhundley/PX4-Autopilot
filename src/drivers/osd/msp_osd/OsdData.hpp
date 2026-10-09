@@ -16,7 +16,8 @@ enum SymbolIndex : uint8_t {
 	ROLL_ANGLE = 17, CROSSHAIRS = 18, AVG_CELL_VOLTAGE = 19,
 	HORIZON_SIDEBARS = 20, POWER = 21, FLIGHT_TIME = 22, AIRSPEED = 23,
 	ARTIFICIAL_HORIZON = 24, MESSAGES = 25, THROTTLE = 26,
-	BATT_COMP_VOLTAGE = 27, BATT_CELL_COMP_VOLTAGE = 28, BATT_PERC = 29
+	BATT_COMP_VOLTAGE = 27, BATT_CELL_COMP_VOLTAGE = 28, BATT_PERC = 29,
+	AIRSPEED_SP = 30
 };
 
 // SI units internally. NaN means unavailable; renderer must never print NaN/Inf.
@@ -30,6 +31,7 @@ struct OsdData {
 	float discharged_mah{NAN};
 	float ground_speed_m_s{NAN};
 	float airspeed_m_s{NAN}; // Validated calibrated airspeed (CAS).
+	float airspeed_setpoint_m_s{NAN}; // Active equivalent/calibrated airspeed target from TECS.
 	bool airspeed_estimated{false};
 	float altitude_m{NAN};
 	float vertical_speed_m_s{NAN};
@@ -66,7 +68,7 @@ struct DisplaySettings {
 	float camera_pitch_deg{0.f}; // Positive camera uptilt relative to body X.
 	float vertical_fov_deg{60.f};
 	// Fixed defaults match the OSD_POS_* parameters and the agreed 53x20 layout.
-	ItemPosition positions[BATT_PERC + 1] {
+	ItemPosition positions[AIRSPEED_SP + 1] {
 		{0, 0}, // CRAFT_NAME
 		{18, 1}, // DISARMED
 		{1, 15}, // GPS_LAT
@@ -97,6 +99,7 @@ struct DisplaySettings {
 		{20, 19}, // BATT_COMP_VOLTAGE
 		{28, 19}, // BATT_CELL_COMP_VOLTAGE
 		{16, 18}, // BATT_PERC
+		{8, 19}, // AIRSPEED_SP
 	};
 };
 

@@ -241,6 +241,8 @@ private:
 		(ParamInt<px4::params::OSD_POS_TIME_Y>) _param_osd_pos_time_y,
 		(ParamInt<px4::params::OSD_POS_ASPD_X>) _param_osd_pos_aspd_x,
 		(ParamInt<px4::params::OSD_POS_ASPD_Y>) _param_osd_pos_aspd_y,
+		(ParamInt<px4::params::OSD_POS_ASP_SP_X>) _param_osd_pos_asp_sp_x,
+		(ParamInt<px4::params::OSD_POS_ASP_SP_Y>) _param_osd_pos_asp_sp_y,
 		(ParamInt<px4::params::OSD_POS_HORIZ_X>) _param_osd_pos_horiz_x,
 		(ParamInt<px4::params::OSD_POS_HORIZ_Y>) _param_osd_pos_horiz_y,
 		(ParamInt<px4::params::OSD_POS_MSG_X>) _param_osd_pos_msg_x,

@@ -3,6 +3,7 @@
 #include "OsdTelemetry.hpp"
 #include <gtest/gtest.h>
 #include <uORB/uORB.h>
+#include <uORB/Publication.hpp>
 #include <matrix/matrix/math.hpp>
 #include <cstring>
 
@@ -685,4 +686,114 @@ TEST_F(OsdTelemetryTest, SameTimestampDifferentMessageStartsItsOwnScrollingWindo
 	message("WARNING 012345678901234567890123456789", 4, published);
 	update();
 	EXPECT_STREQ(core.data().message, "WARNING 0123456789012345678901");
+}
+
+
+TEST_F(OsdTelemetryTest, AirspeedSetpointFollowsControllerInMissionPositionAndAltitude)
+{
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
+	samples.tecs.timestamp = now;
+	samples.tecs.equivalent_airspeed_sp = 22.f;
+	samples.tecs.true_airspeed_sp = 25.f;
+
+	for (uint8_t mode : {
+		     vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION, vehicle_status_s::NAVIGATION_STATE_POSCTL,
+		     vehicle_status_s::NAVIGATION_STATE_ALTCTL
+	     }) {
+		samples.status.nav_state = mode;
+		update();
+		EXPECT_FLOAT_EQ(core.data().airspeed_setpoint_m_s, 22.f);
+		EXPECT_FLOAT_EQ(core.data().airspeed_m_s, 17.f);
+	}
+
+	samples.status.is_vtol = true;
+	update();
+	EXPECT_FLOAT_EQ(core.data().airspeed_setpoint_m_s, 22.f);
+	samples.tecs.equivalent_airspeed_sp = 24.f;
+	update();
+	EXPECT_FLOAT_EQ(core.data().airspeed_setpoint_m_s, 24.f);
+}
+
+TEST_F(OsdTelemetryTest, AirspeedSetpointClearsOutsideFixedWingSpeedControlledModes)
+{
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
+	samples.status.nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+	samples.tecs.timestamp = now;
+	samples.tecs.equivalent_airspeed_sp = 22.f;
+	update();
+	ASSERT_FLOAT_EQ(core.data().airspeed_setpoint_m_s, 22.f);
+
+	for (uint8_t mode : {
+		     vehicle_status_s::NAVIGATION_STATE_MANUAL, vehicle_status_s::NAVIGATION_STATE_ACRO,
+		     vehicle_status_s::NAVIGATION_STATE_STAB, vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+	     }) {
+		samples.status.nav_state = mode;
+		update();
+		EXPECT_TRUE(std::isnan(core.data().airspeed_setpoint_m_s));
+	}
+
+	samples.status.nav_state = vehicle_status_s::NAVIGATION_STATE_POSCTL;
+	samples.status.is_vtol = true;
+	samples.status.in_transition_mode = true;
+	update();
+	EXPECT_TRUE(std::isnan(core.data().airspeed_setpoint_m_s));
+	samples.status.in_transition_mode = false;
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
+	update();
+	EXPECT_TRUE(std::isnan(core.data().airspeed_setpoint_m_s));
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
+	samples.status.timestamp = now - 3 * SECOND;
+	update();
+	EXPECT_TRUE(std::isnan(core.data().airspeed_setpoint_m_s));
+}
+
+TEST_F(OsdTelemetryTest, AirspeedSetpointRejectsStaleInvalidAndPreviousModeSamples)
+{
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
+	samples.status.nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+	samples.tecs.equivalent_airspeed_sp = 22.f;
+
+	for (uint64_t timestamp : {uint64_t(0), now + 1, now - SECOND / 2 - 1}) {
+		samples.tecs.timestamp = timestamp;
+		update();
+		EXPECT_TRUE(std::isnan(core.data().airspeed_setpoint_m_s));
+	}
+
+	samples.tecs.timestamp = now;
+
+	for (float invalid : {NAN, INFINITY, -1.f, 0.f}) {
+		samples.tecs.equivalent_airspeed_sp = invalid;
+		update();
+		EXPECT_TRUE(std::isnan(core.data().airspeed_setpoint_m_s));
+	}
+
+	samples.tecs.equivalent_airspeed_sp = 22.f;
+	samples.status.nav_state_timestamp = now;
+	samples.tecs.timestamp = now - 1;
+	update();
+	EXPECT_TRUE(std::isnan(core.data().airspeed_setpoint_m_s));
+	samples.tecs.timestamp = now;
+	update();
+	EXPECT_FLOAT_EQ(core.data().airspeed_setpoint_m_s, 22.f);
+}
+
+TEST_F(OsdTelemetryTest, AdapterConsumesPublishedAirspeedSetpoint)
+{
+	msp_osd::OsdTelemetry adapter;
+	uORB::Publication<vehicle_status_s> status_pub{ORB_ID(vehicle_status)};
+	uORB::Publication<tecs_status_s> tecs_pub{ORB_ID(tecs_status)};
+	samples.status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_FIXED_WING;
+	samples.status.nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+	samples.tecs.timestamp = now;
+	samples.tecs.equivalent_airspeed_sp = 22.f;
+	ASSERT_TRUE(status_pub.publish(samples.status));
+	ASSERT_TRUE(tecs_pub.publish(samples.tecs));
+	adapter.update(now, settings);
+	EXPECT_FLOAT_EQ(adapter.data().airspeed_setpoint_m_s, 22.f);
+	samples.tecs.equivalent_airspeed_sp = 24.f;
+	ASSERT_TRUE(tecs_pub.publish(samples.tecs));
+	adapter.update(now, settings);
+	EXPECT_FLOAT_EQ(adapter.data().airspeed_setpoint_m_s, 24.f);
+	adapter.update(now + SECOND, settings);
+	EXPECT_TRUE(std::isnan(adapter.data().airspeed_setpoint_m_s));
 }

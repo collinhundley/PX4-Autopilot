@@ -40,12 +40,17 @@ This fallback affects the display only; it does not declare the home bearing val
 | Flight time | Time since Commander's takeoff timestamp, frozen at landing or disarm. The last duration remains until the next takeoff; this is not time since arming or boot. |
 | Flight mode | User-visible navigation mode, with `MC`, `FW`, `>MC` or `>FW` for VTOL state and transitions. |
 | Airspeed | Validated calibrated airspeed (CAS) from `airspeed_validated.calibrated_airspeed_m_s`. `*` after the airspeed glyph (or `AS*` in Betaflight mode) identifies an estimated source, such as ground speed minus wind or synthetic airspeed. Ground speed is not silently substituted. |
+| Airspeed setpoint | Active equivalent/calibrated airspeed target from `tecs_status.equivalent_airspeed_sp`, after controller limits and slew limiting. Available in fixed-wing Mission, Position and Altitude modes, including VTOL fixed-wing flight. Shown as the airspeed icon followed by `>` in INAV font mode, or `AS>` in Betaflight font mode. |
 | Ground speed | Magnitude of fused horizontal velocity. |
 | Altitude | Height relative to home using valid local vertical position and the home altitude reference. There is no fallback to GNSS altitude above sea level. |
 | Home direction and distance | Horizontal distance from fused global position, plus an arrow relative to the camera's horizontal heading. When direction is unavailable at home or the camera points nearly vertically, the arrow points straight ahead. |
 | Artificial horizon | Earth horizon projected into the fixed camera frame, using vehicle attitude and camera mounting/FOV parameters. |
 | Messages | User-facing MAVLink log messages, including autotune progress at the default INFO threshold. |
 | Throttle percentage | Commanded thrust magnitude, using the larger valid, fresh VTOL thrust instance during transition. Axes marked NaN mean stopped motors and contribute zero, so an idle pusher does not hide hover thrust. This is operator feedback, not RC-stick position or measured motor output. Disarmed throttle is zero. |
+
+The airspeed-setpoint item shows `--` when its source is missing, invalid, more than 0.5 seconds old, or predates the current flight mode.
+It also shows `--` in other modes, during VTOL hover or transitions, or when vehicle status is stale.
+It does not substitute measured speed or trim speed for an unavailable controller target.
 
 Additional fields include total pack voltage, average cell voltage, electrical power, GNSS latitude/longitude and satellite count, RC RSSI percentage, vertical speed, numeric pitch/roll, crosshairs, horizon sidebars and armed/disarmed/failsafe status.
 Arming state appears immediately after flight mode as `ARM` or `DIS`; an appended `!` indicates failsafe. The former PX4 label has been removed, with bit 0 reserved to preserve saved masks.
@@ -161,6 +166,7 @@ Positions apply while the driver is running, normally within about one second; n
 | Electrical power | `OSD_POS_POWER_X` | `OSD_POS_POWER_Y` | 1 | 17 |
 | Flight time | `OSD_POS_TIME_X` | `OSD_POS_TIME_Y` | 42 | 1 |
 | Airspeed | `OSD_POS_ASPD_X` | `OSD_POS_ASPD_Y` | 11 | 6 |
+| Airspeed setpoint | `OSD_POS_ASP_SP_X` | `OSD_POS_ASP_SP_Y` | 8 | 19 |
 | Artificial horizon centre | `OSD_POS_HORIZ_X` | `OSD_POS_HORIZ_Y` | 26 | 7 |
 | Messages | `OSD_POS_MSG_X` | `OSD_POS_MSG_Y` | 1 | 3 |
 | Throttle | `OSD_POS_THR_X` | `OSD_POS_THR_Y` | 1 | 19 |
@@ -244,12 +250,17 @@ Existing `OSD_SYMBOLS` bit numbers are retained. The new items use these bits:
 | 27 | `BATT_COMP_VOLTAGE` — compensated pack voltage |
 | 28 | `BATT_CELL_COMP_VOLTAGE` — compensated average cell voltage |
 | 29 | `BATT_PERC` — remaining battery percentage |
+| 30 | `AIRSPEED_SP` — active fixed-wing airspeed setpoint |
 
 Flight mode uses the existing bit 14, and other existing bit labels now control their corresponding rendered fields.
 Saved parameter values are not automatically overwritten on upgrade.
-For example, an existing mask of `16383` does not enable flight mode or any of bits 22–29.
+For example, an existing mask of `16383` does not enable flight mode or any of bits 22–30.
 To adopt the new default layout, explicitly set `OSD_SYMBOLS=1070882546`; otherwise select the desired bits individually.
 The three new battery items are enabled in this default mask and can be selected independently.
+The airspeed-setpoint item is optional: enable `AIRSPEED_SP` (bit 30) in `OSD_SYMBOLS` while retaining the existing selected bits.
+Its default position is directly to the right of throttle percentage, near the bottom left of the 53 by 20 canvas.
+It follows `OSD_UNITS`, showing m/s in metric mode or mph in imperial mode.
+It works independently of `FW_MIS_THR_NUDGE`; when Mission throttle control is enabled, it reflects the resulting target.
 Use `OSD_SYMBOLS=1071407090` to also show measured voltages above the battery group.
 The prior mask `131882994` shows measured voltages without compensated voltages or percentage; `130834418` also omits sidebars.
 Prior masks `131039230` and `131039231` retain pitch, roll, vertical speed, latitude and longitude; the former PX4-label bit is ignored.

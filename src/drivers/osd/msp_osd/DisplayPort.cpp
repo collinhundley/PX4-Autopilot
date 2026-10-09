@@ -482,6 +482,9 @@ bool DisplayPort::render(const OsdData &data, const DisplaySettings &settings)
 	if (enabled(AIRSPEED) && !speed(position(AIRSPEED, 10), airspeed_prefix,
 					data.airspeed_m_s * speed_scale, speed_unit)) { return false; }
 
+	if (enabled(AIRSPEED_SP) && !number(position(AIRSPEED_SP, 10), _inav_font ? "\xe2>" : "AS>",
+					    data.airspeed_setpoint_m_s * speed_scale, 1, speed_unit, 0.f, 9999.f)) { return false; }
+
 	if (enabled(ALTITUDE) && !number(position(ALTITUDE, 12), "", data.altitude_m * distance_scale,
 					 0, altitude_unit, -1e7f, 1e7f)) { return false; }
 

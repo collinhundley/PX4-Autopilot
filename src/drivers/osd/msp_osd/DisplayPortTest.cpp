@@ -15,7 +15,7 @@ using namespace msp_osd;
 namespace
 {
 constexpr float PI = 3.14159265358979323846f;
-constexpr uint32_t ALL_SYMBOLS = (1u << 30) - 1;
+constexpr uint32_t ALL_SYMBOLS = (1u << (AIRSPEED_SP + 1)) - 1;
 
 struct Capture {
 	std::vector<std::vector<uint8_t>> packets;
@@ -114,6 +114,7 @@ OsdData sample()
 	data.discharged_mah = 1234.f;
 	data.ground_speed_m_s = 10.f;
 	data.airspeed_m_s = 20.f;
+	data.airspeed_setpoint_m_s = 22.f;
 	data.altitude_m = 100.f;
 	data.vertical_speed_m_s = -1.f;
 	data.home_distance_m = 1000.f;
@@ -171,7 +172,7 @@ TEST(DisplayPort, MaskBitsAreIndependent)
 {
 	const OsdData data = sample();
 
-	for (unsigned bit = 0; bit <= BATT_PERC; ++bit) {
+	for (unsigned bit = 0; bit <= AIRSPEED_SP; ++bit) {
 		Capture capture;
 		DisplayPort display(Capture::write, &capture);
 		DisplaySettings settings;
@@ -800,7 +801,7 @@ TEST(DisplayPort, MissingAndInvalidSpeedsDisplayZeroWithoutChangingOtherFields)
 
 TEST(DisplayPort, EveryImplementedItemHasIndependentXYPlacement)
 {
-	for (unsigned bit = 1; bit <= BATT_PERC; ++bit) {
+	for (unsigned bit = 1; bit <= AIRSPEED_SP; ++bit) {
 		if (bit == ESC_TMP) { continue; }
 
 		Capture capture;
@@ -858,7 +859,7 @@ TEST(DisplayPort, LivePositionUpdatesAndExplicitDefaultsClearOldLocations)
 TEST(DisplayPort, OffscreenPositionsClipWithoutAbortingOtherItems)
 {
 	for (const auto canvas : {std::array<unsigned, 2> {53, 20}, {30, 16}}) {
-		for (unsigned bit = 1; bit <= BATT_PERC; ++bit) {
+		for (unsigned bit = 1; bit <= AIRSPEED_SP; ++bit) {
 			if (bit == ESC_TMP || bit == FLIGHT_TIME) { continue; }
 
 			Capture capture;
@@ -875,6 +876,46 @@ TEST(DisplayPort, OffscreenPositionsClipWithoutAbortingOtherItems)
 			ASSERT_TRUE(capture.valid) << bit;
 			EXPECT_NE(capture.line(1).find("01:05"), std::string::npos) << bit;
 			EXPECT_EQ(capture.packets.back()[0], 4) << bit;
+		}
+	}
+}
+
+
+TEST(DisplayPort, AirspeedSetpointUsesIconUnitsAndDefaultPositionBesideThrottle)
+{
+	for (bool inav : {false, true}) {
+		for (bool imperial : {false, true}) {
+			Capture capture;
+			DisplayPort display(Capture::write, &capture);
+			DisplaySettings settings;
+			settings.symbols = (1u << AIRSPEED_SP) | (1u << THROTTLE);
+			settings.inav_font = inav;
+			settings.imperial = imperial;
+			EXPECT_EQ(settings.positions[AIRSPEED_SP].x, 8);
+			EXPECT_EQ(settings.positions[AIRSPEED_SP].y, 19);
+			OsdData data = sample();
+			data.throttle_percent = 100.f;
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_TRUE(capture.valid);
+			EXPECT_NE(capture.line(19).substr(1, 6).find("100%"), std::string::npos);
+			EXPECT_EQ(capture.screen[19][7], ' ');
+			const char unit = inav ? (imperial ? '\x91' : '\x8f') : (imperial ? '\x9d' : '\x9f');
+			const std::string prefix = inav ? "\x8c>" : "AS>";
+			const std::string expected = prefix + (imperial ? "49.2" : "22.0") + unit;
+			EXPECT_EQ(capture.line(19).substr(8, expected.size()), expected);
+
+			for (float invalid : {NAN, -1.f, INFINITY, std::numeric_limits<float>::max()}) {
+				data.airspeed_setpoint_m_s = invalid;
+				ASSERT_TRUE(display.render(data, settings));
+				const std::string unavailable = prefix + "--" + unit;
+				EXPECT_EQ(capture.line(19).substr(8, unavailable.size()), unavailable);
+			}
+
+			data.airspeed_setpoint_m_s = 22.f;
+			settings.positions[AIRSPEED_SP] = {3, 12};
+			ASSERT_TRUE(display.render(data, settings));
+			EXPECT_EQ(capture.line(19).substr(8, 10), std::string(10, ' '));
+			EXPECT_EQ(capture.line(12).substr(3, expected.size()), expected);
 		}
 	}
 }

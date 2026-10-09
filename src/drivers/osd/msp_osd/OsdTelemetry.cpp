@@ -150,6 +150,18 @@ void OsdTelemetryCore::update(uint64_t now, const Samples &s, const Settings &se
 	_data.status_valid = fresh(now, s.status.timestamp, 2 * SECOND_US);
 
 	if (_data.status_valid) {
+		const bool airspeed_mode = s.status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION
+					   || s.status.nav_state == vehicle_status_s::NAVIGATION_STATE_POSCTL
+					   || s.status.nav_state == vehicle_status_s::NAVIGATION_STATE_ALTCTL;
+
+		if (airspeed_mode && s.status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING
+		    && !s.status.in_transition_mode && fresh(now, s.tecs.timestamp, SECOND_US / 2)
+		    && s.tecs.timestamp >= s.status.nav_state_timestamp
+		    && std::isfinite(s.tecs.equivalent_airspeed_sp) && s.tecs.equivalent_airspeed_sp > 0.f) {
+			// Use the controller target after airspeed limits and slew limiting, not measured speed or stick position.
+			_data.airspeed_setpoint_m_s = s.tecs.equivalent_airspeed_sp;
+		}
+
 		_data.armed = s.status.arming_state == vehicle_status_s::ARMING_STATE_ARMED;
 		_data.failsafe = s.status.failsafe;
 		const char *name = s.status.nav_state_display < vehicle_status_s::NAVIGATION_STATE_MAX ?
@@ -314,6 +326,7 @@ void OsdTelemetry::update(uint64_t now, const Settings &settings)
 {
 	_battery_sub.update(&_samples.battery);
 	_airspeed_sub.update(&_samples.airspeed);
+	_tecs_sub.update(&_samples.tecs);
 	_position_sub.update(&_samples.position);
 	_global_sub.update(&_samples.global);
 	_home_sub.update(&_samples.home);

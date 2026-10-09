@@ -24916,6 +24916,30 @@ Roll angle in GPS failure loiter mode.
 | ------ | -------- | -------- | --------- | ------- | ---- | --------- |
 | &nbsp; | 0.0      | 60.0     | 0.5       | 15.0    | deg  | &nbsp;    |
 
+### FW_MIS_THR_NUDGE (`INT32`) {#FW_MIS_THR_NUDGE}
+
+Throttle-stick airspeed nudging in Mission mode.
+
+Enable throttle-stick airspeed nudging without leaving Mission mode.
+Applies to fixed-wing waypoint and loiter flight, including VTOLs in fixed-wing mode.
+At 50% throttle, the target is the latest commanded mission airspeed, or FW_AIRSPD_TRIM if none is set.
+Below centre, the target decreases linearly to FW_AIRSPD_MIN at minimum stick; above centre, it increases linearly to FW_AIRSPD_MAX at maximum stick.
+New mission or MAVLink speed commands update the centre reference even while the stick is deflected.
+Nudging does not overwrite the commanded speed: returning to centre restores that reference.
+The autopilot continues to control throttle and pitch, and existing airspeed limits still apply.
+Invalid or lost manual control input restores the normal mission target; configured RC-loss failsafes still apply.
+Takeoff, landing (including early landing configuration and landing abort), VTOL transitions and other flight modes retain their normal airspeed behaviour.
+Always uses the throttle stick, regardless of FW_POS_STK_CONF.
+
+**Values:**
+
+- `0`: Disabled
+- `1`: Enabled
+
+| Reboot | minValue | maxValue | increment | default      | unit | Read-Only |
+| ------ | -------- | -------- | --------- | ------------ | ---- | --------- |
+| &nbsp; |          |          |           | Disabled (0) |      | &nbsp;    |
+
 ### FW_POS_STK_CONF (`INT32`) {#FW_POS_STK_CONF}
 
 Custom stick configuration.
@@ -33745,16 +33769,51 @@ This is lower-bounded by the nominal loop rate of this module.
 | ------ | -------- | -------- | --------- | ------- | ---- | --------- |
 | &nbsp; | 100      | 1000     |           | 125     |      | &nbsp;    |
 
+### OSD_POS_ASP_SP_X (`INT32`) {#OSD_POS_ASP_SP_X}
+
+Airspeed setpoint X position.
+
+Zero-based column of the first character or icon, from the top left.
+Changes apply while running.
+Reset restores the default 53 by 20 layout coordinate.
+Enable the item with OSD_SYMBOLS bit 30.
+Content outside the active canvas is clipped.
+
+| Reboot | minValue | maxValue | increment | default | unit | Read-Only |
+| ------ | -------- | -------- | --------- | ------- | ---- | --------- |
+| &nbsp; | 0        | 59       |           | 8       |      | &nbsp;    |
+
+### OSD_POS_ASP_SP_Y (`INT32`) {#OSD_POS_ASP_SP_Y}
+
+Airspeed setpoint Y position.
+
+Zero-based row of the first character or icon, from the top left.
+Changes apply while running.
+Reset restores the default 53 by 20 layout coordinate.
+Enable the item with OSD_SYMBOLS bit 30.
+Content outside the active canvas is clipped.
+
+| Reboot | minValue | maxValue | increment | default | unit | Read-Only |
+| ------ | -------- | -------- | --------- | ------- | ---- | --------- |
+| &nbsp; | 0        | 21       |           | 19      |      | &nbsp;    |
+
 ### OSD_SYMBOLS (`INT32`) {#OSD_SYMBOLS}
 
 OSD Symbol Selection.
 
-Configure / toggle support display options.
+Select DisplayPort items.
+Existing bit numbers are retained.
+Set zero to clear and release the overlay.
+Battery and arming telemetry continue independently.
+New items use bits 22-30.
+The default hides pitch, roll, vertical speed and coordinates.
+The default shows compensated voltages and remaining charge (bits 27-29); measured voltages remain independently selectable.
+Bit 30 shows the active fixed-wing airspeed target in Mission, Position and Altitude modes, and is disabled by default.
 
 **Bitmask:**
 
-- `0`: CRAFT_NAME
-- `1`: DISARMED
+- `0`: (unused) PX4_LABEL
+- `1`: ARMING_STATE
 - `2`: GPS_LAT
 - `3`: GPS_LON
 - `4`: GPS_SATS
@@ -33767,18 +33826,27 @@ Configure / toggle support display options.
 - `11`: RSSI_VALUE
 - `12`: ALTITUDE
 - `13`: NUMERICAL_VARIO
-- `14`: (unused) FLYMODE
+- `14`: FLYMODE
 - `15`: (unused) ESC_TMP
-- `16`: (unused) PITCH_ANGLE
-- `17`: (unused) ROLL_ANGLE
+- `16`: PITCH_ANGLE
+- `17`: ROLL_ANGLE
 - `18`: CROSSHAIRS
 - `19`: AVG_CELL_VOLTAGE
-- `20`: (unused) HORIZON_SIDEBARS
+- `20`: HORIZON_SIDEBARS
 - `21`: POWER
+- `22`: FLIGHT_TIME
+- `23`: AIRSPEED
+- `24`: ARTIFICIAL_HORIZON
+- `25`: MESSAGES
+- `26`: THROTTLE
+- `27`: BATT_COMP_VOLTAGE
+- `28`: BATT_CELL_COMP_VOLTAGE
+- `29`: BATT_PERC
+- `30`: AIRSPEED_SP
 
-| Reboot | minValue | maxValue | increment | default | unit | Read-Only |
-| ------ | -------- | -------- | --------- | ------- | ---- | --------- |
-| &nbsp; | 0        | 4194303  |           | 16383   |      | &nbsp;    |
+| Reboot | minValue | maxValue | increment | default    | unit | Read-Only |
+| ------ | -------- | -------- | --------- | ---------- | ---- | --------- |
+| &nbsp; |          |          |           | 1070882546 |      | &nbsp;    |
 
 ## PWM Outputs
 

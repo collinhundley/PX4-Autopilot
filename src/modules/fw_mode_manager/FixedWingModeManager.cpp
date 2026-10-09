@@ -287,6 +287,28 @@ FixedWingModeManager::get_manual_airspeed_setpoint()
 	return _commanded_manual_airspeed_setpoint;
 }
 
+float
+FixedWingModeManager::get_mission_airspeed_setpoint(float cruising_speed)
+{
+	const float airspeed = PX4_ISFINITE(cruising_speed) && cruising_speed > FLT_EPSILON ? cruising_speed : NAN;
+
+	if (!_param_fw_mis_thr_nudge.get()
+	    || _vehicle_status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION
+	    || _vehicle_status.vehicle_type != vehicle_status_s::VEHICLE_TYPE_FIXED_WING
+	    || _vehicle_status.in_transition_mode || !_sticks.isAvailable()) {
+		return airspeed;
+	}
+
+	const float base_airspeed = math::constrain(PX4_ISFINITE(airspeed) ? airspeed : _param_fw_airspd_trim.get(),
+				    _param_fw_airspd_min.get(), _param_fw_airspd_max.get());
+
+	// Always use throttle, independently of the manual Position/Altitude stick configuration.
+	// Derive a temporary target without modifying the mission's commanded cruising speed.
+	return math::interpolateNXY(_sticks.getThrottleZeroCentered(),
+	{-1.f, 0.f, 1.f},
+	{_param_fw_airspd_min.get(), base_airspeed, _param_fw_airspd_max.get()});
+}
+
 void
 FixedWingModeManager::landing_status_publish()
 {
@@ -779,7 +801,7 @@ FixedWingModeManager::control_auto_position(const float control_interval, const 
 {
 	// Course Hold: if a course is explicitly set, navigate along that bearing (ground track)
 	if (PX4_ISFINITE(pos_sp_curr.course)) {
-		const float target_airspeed = pos_sp_curr.cruising_speed > FLT_EPSILON ? pos_sp_curr.cruising_speed : NAN;
+		const float target_airspeed = get_mission_airspeed_setpoint(pos_sp_curr.cruising_speed);
 
 		const Vector2f curr_pos_local{_local_pos.x, _local_pos.y};
 		const DirectionalGuidanceOutput sp = navigateBearing(curr_pos_local, pos_sp_curr.course, ground_speed, _wind_vel);
@@ -804,7 +826,7 @@ FixedWingModeManager::control_auto_position(const float control_interval, const 
 	}
 
 	const float acc_rad = _directional_guidance.switchDistance(500.0f);
-	const float target_airspeed = pos_sp_curr.cruising_speed > FLT_EPSILON ? pos_sp_curr.cruising_speed : NAN;
+	const float target_airspeed = get_mission_airspeed_setpoint(pos_sp_curr.cruising_speed);
 
 	// waypoint is a plain navigation waypoint
 	float position_sp_alt = pos_sp_curr.alt;
@@ -962,6 +984,9 @@ FixedWingModeManager::control_auto_loiter(const float control_interval, const Ve
 		_flaps_setpoint = _param_fw_flaps_lnd_scl.get();
 		_spoilers_setpoint = _param_fw_spoilers_lnd.get();
 		_new_landing_gear_position = landing_gear_s::GEAR_DOWN;
+
+	} else if (!_landing_abort_status) {
+		target_airspeed = get_mission_airspeed_setpoint(pos_sp_curr.cruising_speed);
 	}
 
 	const DirectionalGuidanceOutput sp = navigateLoiter(curr_wp_local, curr_pos_local, loiter_radius,
@@ -1023,7 +1048,7 @@ FixedWingModeManager::controlAutoFigureEight(const float control_interval, const
 		const Vector2f &ground_speed, const position_setpoint_s &pos_sp_curr)
 {
 	// airspeed settings
-	const float target_airspeed = pos_sp_curr.cruising_speed > FLT_EPSILON ? pos_sp_curr.cruising_speed : NAN;
+	const float target_airspeed = get_mission_airspeed_setpoint(pos_sp_curr.cruising_speed);
 
 	Vector2f curr_pos_local{_local_pos.x, _local_pos.y};
 

@@ -362,6 +362,26 @@ parameters:
       max: 2.0
       decimal: 1
       increment: 1.0
+    FW_MIS_THR_NUDGE:
+      description:
+        short: Throttle-stick airspeed nudging in Mission mode
+        long: |-
+          Enable throttle-stick airspeed nudging without leaving Mission mode.
+          Applies to fixed-wing waypoint and loiter flight, including VTOLs in fixed-wing mode.
+          At 50% throttle, the target is the latest commanded mission airspeed, or FW_AIRSPD_TRIM if none is
+          set.
+          Below centre, the target decreases linearly to FW_AIRSPD_MIN at minimum stick; above centre, it
+          increases linearly to FW_AIRSPD_MAX at maximum stick.
+          New mission or MAVLink speed commands update the centre reference even while the stick is deflected.
+          Nudging does not overwrite the commanded speed: returning to centre restores that reference.
+          The autopilot continues to control throttle and pitch, and existing airspeed limits still apply.
+          Invalid or lost manual control input restores the normal mission target; configured RC-loss
+          failsafes still apply.
+          Takeoff, landing (including early landing configuration and landing abort), VTOL transitions and
+          other flight modes retain their normal airspeed behaviour.
+          Always uses the throttle stick, regardless of FW_POS_STK_CONF.
+      type: boolean
+      default: 0
     FW_POS_STK_CONF:
       description:
         short: Custom stick configuration

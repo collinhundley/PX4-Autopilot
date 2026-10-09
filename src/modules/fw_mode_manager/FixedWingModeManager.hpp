@@ -171,6 +171,8 @@ public:
 	bool init();
 
 private:
+	friend class MissionAirspeedTest;
+
 	void Run() override;
 
 	uORB::SubscriptionCallbackWorkItem _local_pos_sub{this, ORB_ID(vehicle_local_position)};
@@ -659,6 +661,7 @@ private:
 						const position_setpoint_s &pos_sp_curr);
 
 	float get_manual_airspeed_setpoint();
+	float get_mission_airspeed_setpoint(float cruising_speed);
 
 	void reset_takeoff_state();
 	void reset_landing_state();
@@ -868,6 +871,7 @@ private:
 		(ParamFloat<px4::params::FW_FLAPS_TO_SCL>) _param_fw_flaps_to_scl,
 		(ParamFloat<px4::params::FW_SPOILERS_LND>) _param_fw_spoilers_lnd,
 		(ParamInt<px4::params::FW_POS_STK_CONF>) _param_fw_pos_stk_conf,
+		(ParamBool<px4::params::FW_MIS_THR_NUDGE>) _param_fw_mis_thr_nudge,
 		(ParamInt<px4::params::FW_GPSF_LT>) _param_nav_gpsf_lt,
 		(ParamFloat<px4::params::FW_GPSF_R>) _param_nav_gpsf_r,
 		(ParamFloat<px4::params::FW_T_SPDWEIGHT>) _param_t_spdweight,

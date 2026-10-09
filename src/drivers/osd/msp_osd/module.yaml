@@ -16,10 +16,12 @@ parameters:
                 long: |
                   Select DisplayPort items. Existing bit numbers are retained.
                   Set zero to clear and release the overlay. Battery and arming
-                  telemetry continue independently. New items use bits 22-29.
+                  telemetry continue independently. New items use bits 22-30.
                   The default hides pitch, roll, vertical speed and coordinates.
                   The default shows compensated voltages and remaining charge
                   (bits 27-29); measured voltages remain independently selectable.
+                  Bit 30 shows the active fixed-wing airspeed target in Mission,
+                  Position and Altitude modes, and is disabled by default.
             type: bitmask
             bit:
                 0: (unused) PX4_LABEL
@@ -52,6 +54,7 @@ parameters:
                 27: BATT_COMP_VOLTAGE
                 28: BATT_CELL_COMP_VOLTAGE
                 29: BATT_PERC
+                30: AIRSPEED_SP
             default: 1070882546
 
         OSD_FONT:
@@ -702,6 +705,30 @@ parameters:
                     Enable the item with OSD_SYMBOLS. Content outside the active canvas is clipped.
             type: int32
             default: 6
+            min: 0
+            max: 21
+
+        OSD_POS_ASP_SP_X:
+            description:
+                short: Airspeed setpoint X position
+                long: |
+                    Zero-based column of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS bit 30. Content outside the active canvas is clipped.
+            type: int32
+            default: 8
+            min: 0
+            max: 59
+
+        OSD_POS_ASP_SP_Y:
+            description:
+                short: Airspeed setpoint Y position
+                long: |
+                    Zero-based row of the first character or icon, from the top left.
+                    Changes apply while running. Reset restores the default 53 by 20 layout coordinate.
+                    Enable the item with OSD_SYMBOLS bit 30. Content outside the active canvas is clipped.
+            type: int32
+            default: 19
             min: 0
             max: 21
 

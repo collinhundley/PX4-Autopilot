@@ -68,3 +68,5 @@ px4_add_module(
 	DEPENDS
 		${POSCONTROL_DEPENDENCIES}
 	)
+
+px4_add_functional_gtest(SRC MissionAirspeedTest.cpp LINKLIBS modules__fw_mode_manager)

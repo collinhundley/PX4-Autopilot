@@ -136,6 +136,9 @@ void MspOsd::SendDisplay(uint64_t now)
 		display.positions[msp_osd::AIRSPEED] = {coordinate(_param_osd_pos_aspd_x, 59),
 							coordinate(_param_osd_pos_aspd_y, 21)
 						       };
+		display.positions[msp_osd::AIRSPEED_SP] = {coordinate(_param_osd_pos_asp_sp_x, 59),
+							   coordinate(_param_osd_pos_asp_sp_y, 21)
+							  };
 		display.positions[msp_osd::ARTIFICIAL_HORIZON] = {coordinate(_param_osd_pos_horiz_x, 59),
 								  coordinate(_param_osd_pos_horiz_y, 21)
 								 };

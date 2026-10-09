@@ -76,6 +76,24 @@ For more information about mission planning, see:
 - [Mission Planning](../flying/missions.md)
 - [Plan View](https://docs.qgroundcontrol.com/master/en/qgc-user-guide/plan_view/plan_view.html) (_QGroundControl_ User Guide)
 
+## Throttle Stick Airspeed Control
+
+Set [FW_MIS_THR_NUDGE](../advanced_config/parameter_reference.md#FW_MIS_THR_NUDGE) to `1` to adjust airspeed with the throttle stick while remaining in Mission mode.
+This is disabled by default and applies to fixed-wing aircraft and VTOLs flying in fixed-wing mode.
+
+- At centred throttle, the target is the latest mission airspeed command, or [FW_AIRSPD_TRIM](../advanced_config/parameter_reference.md#FW_AIRSPD_TRIM) if no speed is set.
+- Moving the throttle down interpolates towards [FW_AIRSPD_MIN](../advanced_config/parameter_reference.md#FW_AIRSPD_MIN) at the bottom of its travel.
+- Moving the throttle up interpolates towards [FW_AIRSPD_MAX](../advanced_config/parameter_reference.md#FW_AIRSPD_MAX) at the top of its travel.
+
+The override applies to waypoint and loiter flight and does not overwrite the mission's commanded speed.
+New speed commands update the centre reference immediately, even while the stick is deflected.
+The throttle stick is always used, regardless of [FW_POS_STK_CONF](../advanced_config/parameter_reference.md#FW_POS_STK_CONF).
+The controller's existing airspeed limits, including minimum speed increases required by turns and lateral guidance, still apply.
+
+Takeoff, landing (including early landing configuration in the descent loiter and landing abort), VTOL transitions and other flight modes retain their normal airspeed behaviour.
+If manual control input becomes invalid, the normal mission airspeed target is restored; configured RC-loss failsafe actions still apply.
+This feature does not change stick takeover behaviour during VTOL hover.
+
 ## Mission Feasibility Checks
 
 PX4 runs some basic sanity checks to determine if a mission is feasible when it is uploaded and before executing a mission.
