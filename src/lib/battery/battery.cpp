@@ -90,6 +90,21 @@ Battery::Battery(int index, ModuleParams *parent, const int sample_interval_us, 
 	snprintf(param_name, sizeof(param_name), "BAT%d_I_OVERWRITE", _index);
 	_param_handles.i_overwrite = param_find(param_name);
 
+	snprintf(param_name, sizeof(param_name), "BAT%d_SOC_MODE", _index);
+	_param_handles.soc_mode = param_find(param_name);
+
+	for (unsigned i = 0; i < BatterySocEstimator::PROFILE_POINTS; ++i) {
+		snprintf(param_name, sizeof(param_name), "BAT%d_SOC_V%u", _index, i);
+		_param_handles.soc_voltage[i] = param_find(param_name);
+	}
+
+	snprintf(param_name, sizeof(param_name), "BAT%d_V_LOW", _index);
+	_param_handles.voltage_low = param_find(param_name);
+	snprintf(param_name, sizeof(param_name), "BAT%d_V_CRIT", _index);
+	_param_handles.voltage_critical = param_find(param_name);
+	snprintf(param_name, sizeof(param_name), "BAT%d_V_EMERG", _index);
+	_param_handles.voltage_emergency = param_find(param_name);
+
 	_param_handles.low_thr = param_find("BAT_LOW_THR");
 	_param_handles.crit_thr = param_find("BAT_CRIT_THR");
 	_param_handles.emergen_thr = param_find("BAT_EMERGEN_THR");
@@ -122,37 +137,12 @@ void Battery::updateTemperature(const float temperature_c)
 
 void Battery::updateBatteryStatus(const hrt_abstime &timestamp)
 {
+	if (_last_timestamp != 0 && timestamp <= _last_timestamp) {
+		return;
+	}
+
+	_sample_timestamp = timestamp;
 	updateDt(timestamp);
-
-	// Require minimum voltage otherwise override connected status
-	if (_voltage_v < LITHIUM_BATTERY_RECOGNITION_VOLTAGE) {
-		_connected = false;
-	}
-
-	if (!_connected || (_last_unconnected_timestamp == 0)) {
-		_last_unconnected_timestamp = timestamp;
-	}
-
-	// Wait with initializing filters to avoid relying on a voltage sample from the rising edge
-	_battery_initialized = _connected && (timestamp > _last_unconnected_timestamp + 2_s);
-
-	if (_connected && !_battery_initialized && _internal_resistance_initialized && _params.n_cells > 0) {
-		resetInternalResistanceEstimation(_voltage_v, _current_a);
-	}
-
-	sumDischarged(_current_a);
-	_state_of_charge_volt_based =
-		calculateStateOfChargeVoltageBased(_voltage_v, _current_a);
-
-	if (!_external_state_of_charge) {
-		estimateStateOfCharge();
-	}
-
-	computeScale();
-
-	if (_connected && _battery_initialized) {
-		_warning = determineWarning(_state_of_charge);
-	}
 
 	if (_vehicle_status_sub.updated()) {
 		vehicle_status_s vehicle_status;
@@ -160,6 +150,87 @@ void Battery::updateBatteryStatus(const hrt_abstime &timestamp)
 		if (_vehicle_status_sub.copy(&vehicle_status)) {
 			_armed = (vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED);
 			_vehicle_status_is_fw = (vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING);
+			_vehicle_status_timestamp = vehicle_status.timestamp;
+		}
+	}
+
+	if (!_armed && _parameter_update_pending) {
+		updateParams();
+	}
+
+	// Require minimum voltage otherwise override connected status.
+	if (PX4_ISFINITE(_voltage_v) && _voltage_v < LITHIUM_BATTERY_RECOGNITION_VOLTAGE) {
+		_connected = false;
+	}
+
+	if (_connected != _was_connected) {
+		// An observed disconnect invalidates charge history, even if the same pack is reconnected.
+		_discharged_mah = _discharged_mah_loop = 0.f;
+		_dt_discharge = 0.f;
+		_legacy_state_of_charge = -1.f;
+		_soc_estimator.reset();
+		_soc_active = false;
+		_was_connected = _connected;
+		_warning = battery_status_s::WARNING_NONE;
+	}
+
+	if (!_connected || (_last_unconnected_timestamp == 0)) {
+		_last_unconnected_timestamp = timestamp;
+	}
+
+	// Wait with initializing filters to avoid relying on a voltage sample from the rising edge.
+	_battery_initialized = _connected && (timestamp > _last_unconnected_timestamp + 2_s);
+
+	if (_connected && !_battery_initialized && _internal_resistance_initialized && _params.n_cells > 0
+	    && PX4_ISFINITE(_voltage_v)) {
+		// Unknown current must not poison the voltage filters or introduce negative sag compensation.
+		const float initialization_current = PX4_ISFINITE(_current_a) && _current_a >= 0.f ? _current_a : 0.f;
+		resetInternalResistanceEstimation(_voltage_v, initialization_current);
+	}
+
+	_discharged_mah_loop = 0.f;
+
+	if (_connected) {
+		sumDischarged(_current_a);
+	}
+
+	_state_of_charge_volt_based = calculateStateOfChargeVoltageBased(_voltage_v, _current_a);
+
+	if (!_external_state_of_charge) {
+		estimateStateOfCharge();
+		_state_of_charge = _legacy_state_of_charge;
+	}
+
+	if (_soc_mode != battery_soc_status_s::MODE_DISABLED && !_external_state_of_charge) {
+		const bool vehicle_status_valid = _vehicle_status_timestamp != 0 && timestamp >= _vehicle_status_timestamp
+						  && timestamp - _vehicle_status_timestamp < 2_s;
+		// Idle current overwrite is not a measurement and cannot qualify voltage relaxation.
+		const float measured_current = _params.i_overwrite > FLT_EPSILON ? NAN : _current_a;
+		const float cell_voltage = _params.n_cells > 0 ? _voltage_v / _params.n_cells : NAN;
+		_soc_estimator.update(timestamp, _connected, _armed, vehicle_status_valid, measured_current,
+				      _battery_initialized && PX4_ISFINITE(cell_voltage) ? _cell_voltage_filter_v.getState() : NAN,
+				      cell_voltage, _discharged_mah);
+
+		if (_soc_mode == battery_soc_status_s::MODE_ACTIVE && _soc_estimator.profileValid()
+		    && _soc_estimator.protectionValid() && _soc_estimator.initialized()) {
+			_soc_active = true;
+		}
+
+		if (_soc_mode == battery_soc_status_s::MODE_ACTIVE) {
+			// An explicitly selected active estimator must be ready before flight. Do not conceal
+			// an invalid profile or missing startup voltage behind the legacy estimate.
+			_state_of_charge = _soc_active && _connected && PX4_ISFINITE(_soc_estimator.soc()) ? _soc_estimator.soc() : -1.f;
+		}
+	}
+
+	computeScale();
+
+	if (_connected && _battery_initialized) {
+		_warning = determineWarning(_state_of_charge);
+
+		if (_soc_mode == battery_soc_status_s::MODE_ACTIVE && !_external_state_of_charge
+		    && _soc_estimator.protectionValid()) {
+			_warning = math::max(_warning, _soc_estimator.voltageWarning());
 		}
 	}
 }
@@ -179,7 +250,7 @@ battery_status_s Battery::getBatteryStatus()
 	battery_status.discharged_mah = _discharged_mah;
 	battery_status.remaining = _state_of_charge;
 	battery_status.scale = _scale;
-	battery_status.time_remaining_s = computeRemainingTime(_current_a);
+	battery_status.time_remaining_s = _state_of_charge >= 0.f ? computeRemainingTime(_current_a) : NAN;
 	battery_status.temperature = _temperature_c;
 	battery_status.cell_count = _params.n_cells;
 	battery_status.connected = _connected;
@@ -204,10 +275,48 @@ battery_status_s Battery::getBatteryStatus()
 	return battery_status;
 }
 
+battery_soc_status_s Battery::getSocEstimatorStatus() const
+{
+	battery_soc_status_s status{};
+	status.timestamp = hrt_absolute_time();
+	status.timestamp_sample = _sample_timestamp;
+	status.battery_id = _index;
+	status.source = _source;
+	status.mode = _soc_mode;
+	status.legacy_soc = _external_state_of_charge ? _state_of_charge : _legacy_state_of_charge;
+	status.coulomb_soc = _soc_estimator.coulombSoc();
+	status.voltage_soc = _soc_estimator.voltageSoc();
+	status.soc = _soc_estimator.soc();
+	status.voltage_v = _voltage_v;
+	status.current_a = _current_a;
+	status.discharged_mah = _discharged_mah;
+	status.compensated_cell_voltage = _cell_voltage_filter_v.getState();
+	status.filtered_terminal_cell_voltage = _soc_estimator.filteredTerminalVoltage();
+	status.profile_valid = _soc_estimator.profileValid();
+	status.protection_valid = _soc_estimator.protectionValid();
+	status.initialized = _soc_estimator.initialized();
+	status.charge_history_valid = _soc_estimator.chargeHistoryValid();
+	status.full_charge_confirmed = _soc_estimator.fullChargeConfirmed();
+	status.correction_eligible = _soc_estimator.correctionEligible();
+	status.active = _soc_active && _connected && !_external_state_of_charge;
+	status.external_soc = _external_state_of_charge;
+	status.soc_warning = determineWarning(_state_of_charge);
+	status.voltage_warning = _soc_estimator.voltageWarning();
+	status.warning = _warning;
+	return status;
+}
+
 void Battery::publishBatteryStatus(const battery_status_s &battery_status)
 {
 	if (_source == _params.source) {
 		_battery_status_pub.publish(battery_status);
+
+		// Five Hz matches the default battery logging rate; identity is carried explicitly.
+		if (_soc_mode != battery_soc_status_s::MODE_DISABLED
+		    && (_last_soc_publication == 0 || _sample_timestamp - _last_soc_publication >= 200_ms)) {
+			_soc_status_pub.publish(getSocEstimatorStatus());
+			_last_soc_publication = _sample_timestamp;
+		}
 	}
 }
 
@@ -218,7 +327,9 @@ void Battery::updateAndPublishBatteryStatus(const hrt_abstime &timestamp)
 }
 void Battery::updateDt(const hrt_abstime &timestamp)
 {
-	if (_last_timestamp != 0) {
+	_dt = _dt_discharge = 0.f;
+
+	if (_last_timestamp != 0 && timestamp > _last_timestamp) {
 		// _dt_discharge is the true, unclamped time delta: for the coulomb
 		// count in sumDischarged() below, using the real elapsed time is
 		// always more accurate than clamping it, even across an unusually
@@ -237,7 +348,9 @@ void Battery::updateDt(const hrt_abstime &timestamp)
 
 float Battery::sumDischarged(float current_a)
 {
-	if (_dt_discharge > FLT_EPSILON && fabsf(current_a + 1.f) > FLT_EPSILON) {
+	_discharged_mah_loop = 0.f;
+
+	if (_dt_discharge > FLT_EPSILON && PX4_ISFINITE(current_a) && fabsf(current_a + 1.f) > FLT_EPSILON) {
 		// mAh since last loop: (current[A] * 1000 = [mA]) * (dt[s] / 3600 = [h])
 		// current = -1 means invalid current measurement
 		_discharged_mah_loop = (current_a * 1e3f) * (_dt_discharge / 3600.f);
@@ -249,7 +362,7 @@ float Battery::sumDischarged(float current_a)
 
 float Battery::calculateStateOfChargeVoltageBased(const float voltage_v, const float current_a)
 {
-	if (_params.n_cells == 0) {
+	if (_params.n_cells <= 0 || !PX4_ISFINITE(voltage_v) || voltage_v <= 0.f) {
 		return -1.0f;
 	}
 
@@ -257,7 +370,7 @@ float Battery::calculateStateOfChargeVoltageBased(const float voltage_v, const f
 	float cell_voltage = voltage_v / _params.n_cells;
 
 	// correct battery voltage locally for load drop according to internal resistance and current
-	if (current_a > FLT_EPSILON) {
+	if (PX4_ISFINITE(current_a) && current_a > FLT_EPSILON) {
 		updateInternalResistanceEstimation(voltage_v, current_a);
 
 		if (_params.r_internal >= 0.f) { // Use user specified internal resistance value
@@ -269,7 +382,13 @@ float Battery::calculateStateOfChargeVoltageBased(const float voltage_v, const f
 
 	}
 
-	_cell_voltage_filter_v.update(cell_voltage);
+	if (!PX4_ISFINITE(_cell_voltage_filter_v.getState())) {
+		_cell_voltage_filter_v.reset(cell_voltage);
+
+	} else {
+		_cell_voltage_filter_v.update(cell_voltage, _dt);
+	}
+
 	return math::interpolate(_cell_voltage_filter_v.getState(), _params.v_empty, _params.v_charged, 0.f, 1.f);
 }
 
@@ -323,26 +442,34 @@ void Battery::resetInternalResistanceEstimation(const float voltage_v, const flo
 
 void Battery::estimateStateOfCharge()
 {
+	if (!PX4_ISFINITE(_state_of_charge_volt_based) || _state_of_charge_volt_based < 0.f) {
+		return;
+	}
+
 	// choose which quantity we're using for final reporting
 	if ((_capacity_mah > 0.f) && _battery_initialized) {
 		// if battery capacity is known, fuse voltage measurement with used capacity
 		// The lower the voltage the more adjust the estimate with it to avoid deep discharge
 		const float weight_v = 3e-2f * (1 - _state_of_charge_volt_based);
-		_state_of_charge = (1 - weight_v) * _state_of_charge + weight_v * _state_of_charge_volt_based;
+		_legacy_state_of_charge = (1 - weight_v) * _legacy_state_of_charge + weight_v * _state_of_charge_volt_based;
 		// directly apply current capacity slope calculated using current
-		_state_of_charge -= _discharged_mah_loop / _capacity_mah;
-		_state_of_charge = math::max(_state_of_charge, 0.f);
+		_legacy_state_of_charge -= _discharged_mah_loop / _capacity_mah;
+		_legacy_state_of_charge = math::max(_legacy_state_of_charge, 0.f);
 
 		const float state_of_charge_current_based = math::max(1.f - _discharged_mah / _capacity_mah, 0.f);
-		_state_of_charge = math::min(state_of_charge_current_based, _state_of_charge);
+		_legacy_state_of_charge = math::min(state_of_charge_current_based, _legacy_state_of_charge);
 
 	} else {
-		_state_of_charge = _state_of_charge_volt_based;
+		_legacy_state_of_charge = _state_of_charge_volt_based;
 	}
 }
 
-uint8_t Battery::determineWarning(float state_of_charge)
+uint8_t Battery::determineWarning(float state_of_charge) const
 {
+	if (!PX4_ISFINITE(state_of_charge) || state_of_charge < 0.f || state_of_charge > 1.f) {
+		return battery_status_s::WARNING_NONE; // Missing SOC is an arming failure, not a low-charge measurement.
+	}
+
 	if (state_of_charge < _params.emergen_thr) {
 		return battery_status_s::WARNING_EMERGENCY;
 
@@ -427,6 +554,13 @@ float Battery::computeRemainingTime(float current_a)
 
 void Battery::updateParams()
 {
+	// Apply profile/calibration changes while disarmed, never partway through a flight.
+	if (_armed && !_first_parameter_update) {
+		_parameter_update_pending = true;
+		return;
+	}
+
+	_parameter_update_pending = false;
 	const int n_cells = _first_parameter_update ? 0 : _params.n_cells;
 	param_get(_param_handles.v_empty, &_params.v_empty);
 	param_get(_param_handles.v_charged, &_params.v_charged);
@@ -458,6 +592,52 @@ void Battery::updateParams()
 						    2.f) + powf(_estimation_covariance(1, 1), 2.f));
 		_internal_resistance_initialized = true;
 	}
+
+	BatterySocEstimator::Config soc_config{};
+	soc_config.capacity_mah = capacity;
+	soc_config.cell_resistance = _params.r_internal;
+	soc_config.current_overwrite = _params.i_overwrite > FLT_EPSILON;
+	soc_config.cell_count = _params.n_cells;
+
+	for (unsigned i = 0; i < BatterySocEstimator::PROFILE_POINTS; ++i) {
+		param_get(_param_handles.soc_voltage[i], &soc_config.voltage[i]);
+	}
+
+	param_get(param_find("BAT_SOC_TC"), &soc_config.correction_time_constant);
+	param_get(param_find("BAT_SOC_I_MAX"), &soc_config.current_max);
+	param_get(param_find("BAT_SOC_I_STAB"), &soc_config.current_stability);
+	param_get(param_find("BAT_SOC_SETTLE"), &soc_config.settling_time);
+	param_get(param_find("BAT_SOC_F_SETT"), &soc_config.flight_settling_time);
+	float power_span_percent{30.f};
+	param_get(param_find("BAT_SOC_P_STAB"), &power_span_percent);
+	soc_config.flight_power_stability = power_span_percent * 0.01f;
+	param_get(param_find("BAT_SOC_F_DV"), &soc_config.flight_voltage_margin);
+	float correction_percent_per_minute{2.f};
+	param_get(param_find("BAT_SOC_F_RATE"), &correction_percent_per_minute);
+	soc_config.flight_correction_rate = correction_percent_per_minute / 6000.f;
+	int32_t in_flight{1};
+	param_get(param_find("BAT_SOC_INFLT"), &in_flight);
+	soc_config.correction_in_flight = in_flight != 0;
+	param_get(_param_handles.voltage_low, &soc_config.voltage_low);
+	param_get(_param_handles.voltage_critical, &soc_config.voltage_critical);
+	param_get(_param_handles.voltage_emergency, &soc_config.voltage_emergency);
+	param_get(param_find("BAT_V_TC"), &soc_config.voltage_filter_time_constant);
+	param_get(param_find("BAT_V_DELAY"), &soc_config.voltage_delay);
+	param_get(param_find("BAT_V_HYST"), &soc_config.voltage_hysteresis);
+	int32_t mode{0};
+	param_get(_param_handles.soc_mode, &mode);
+
+	if (_soc_estimator.configure(soc_config) || mode == battery_soc_status_s::MODE_DISABLED) {
+		_soc_active = false;
+		_soc_estimator.reset();
+	}
+
+	if (mode != battery_soc_status_s::MODE_ACTIVE) {
+		_soc_active = false;
+	}
+
+	_soc_mode = mode >= battery_soc_status_s::MODE_DISABLED && mode <= battery_soc_status_s::MODE_ACTIVE
+		    ? mode : battery_soc_status_s::MODE_DISABLED;
 
 	ModuleParams::updateParams();
 

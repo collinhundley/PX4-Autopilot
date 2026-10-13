@@ -56,6 +56,8 @@
 #include <uORB/PublicationMulti.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/battery_status.h>
+#include <uORB/topics/battery_soc_status.h>
+#include "BatterySocEstimator.hpp"
 #include <uORB/topics/flight_phase_estimation.h>
 #include <uORB/topics/vehicle_status.h>
 
@@ -102,6 +104,7 @@ public:
 	void updateBatteryStatus(const hrt_abstime &timestamp);
 
 	battery_status_s getBatteryStatus();
+	battery_soc_status_s getSocEstimatorStatus() const;
 	float getCurrentAverage() const { return PX4_ISFINITE(_current_average_filter_a.getState()) ? _current_average_filter_a.getState() : -1.f; }
 	void publishBatteryStatus(const battery_status_s &battery_status);
 
@@ -130,7 +133,7 @@ public:
 	 * @return Accumulated used capacity in mAh
 	 */
 	float sumDischarged(float current_a);
-	uint8_t determineWarning(float state_of_charge);
+	uint8_t determineWarning(float state_of_charge) const;
 	void updateDt(const hrt_abstime &timestamp);
 
 protected:
@@ -148,6 +151,11 @@ protected:
 		param_t source;
 		param_t bat_avrg_current;
 		param_t i_overwrite;
+		param_t soc_mode;
+		param_t soc_voltage[BatterySocEstimator::PROFILE_POINTS];
+		param_t voltage_low;
+		param_t voltage_critical;
+		param_t voltage_emergency;
 	} _param_handles{};
 
 	struct {
@@ -177,6 +185,16 @@ private:
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
 	uORB::SubscriptionData<flight_phase_estimation_s> _flight_phase_estimation_sub{ORB_ID(flight_phase_estimation)};
 	uORB::PublicationMulti<battery_status_s> _battery_status_pub{ORB_ID(battery_status)};
+	uORB::PublicationMulti<battery_soc_status_s> _soc_status_pub{ORB_ID(battery_soc_status)};
+	BatterySocEstimator _soc_estimator;
+	int32_t _soc_mode{0};
+	bool _soc_active{false};
+	bool _was_connected{false};
+	bool _parameter_update_pending{false};
+	hrt_abstime _sample_timestamp{0};
+	hrt_abstime _vehicle_status_timestamp{0};
+	hrt_abstime _last_soc_publication{0};
+	float _legacy_state_of_charge{-1.f};
 
 	bool _external_state_of_charge{false}; ///< inticates that the soc is injected and not updated by this library
 

@@ -348,6 +348,7 @@
 
   - [Power Systems](power_systems/index.md)
     - [Battery Estimation Tuning](config/battery.md)
+    - [Calibrated Battery SOC Estimator](config/battery_soc_estimator.md)
     - [Battery Chemistry Overview](power_systems/battery_chemistry.md)
     - [Power Modules/PDB](power_module/index.md)
       - [ARK PAB Power Module](power_module/ark_pab_power_module.md)

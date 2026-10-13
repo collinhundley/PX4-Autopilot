@@ -31,7 +31,8 @@
 #
 ############################################################################
 
-px4_add_library(battery battery.cpp)
+px4_add_library(battery battery.cpp BatterySocEstimator.cpp)
+px4_add_unit_gtest(SRC BatterySocEstimatorTest.cpp EXTRA_SRCS BatterySocEstimator.cpp)
 px4_add_functional_gtest(SRC BatteryTest.cpp LINKLIBS battery)
 
 # TODO: Add an option in px4_add_library function to add module config file

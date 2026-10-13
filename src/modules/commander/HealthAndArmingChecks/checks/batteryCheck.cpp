@@ -142,7 +142,24 @@ void BatteryChecks::checkAndReport(const Context &context, Report &reporter)
 				worst_warning = battery.warning;
 			}
 
-			if (battery.remaining < worst_battery_remaining) {
+			const bool soc_available = PX4_ISFINITE(battery.remaining) && battery.remaining >= 0.f && battery.remaining <= 1.f;
+
+			if (!context.isArmed() && !soc_available) {
+				/* EVENT
+				 * @description
+				 * The battery has no valid starting state of charge. Wait for battery sensor startup
+				 * and check the configured battery profile and voltage measurements.
+				 */
+				reporter.armingCheckFailure<uint8_t>(NavModes::All, health_component_t::battery,
+								     events::ID("check_battery_soc_unavailable"), events::Log::Error,
+								     "Battery {1}: charge estimate unavailable", index + 1);
+
+				if (reporter.mavlink_log_pub()) {
+					mavlink_log_critical(reporter.mavlink_log_pub(), "Battery %i: charge estimate unavailable\t", index + 1);
+				}
+			}
+
+			if (soc_available && battery.remaining < worst_battery_remaining) {
 				worst_battery_remaining = battery.remaining;
 			}
 

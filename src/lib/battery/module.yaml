@@ -200,3 +200,937 @@ parameters:
             decimal: 2
             increment: 0.1
             default: 15
+
+    - group: Battery SOC Profile
+      definitions:
+        BAT${i}_SOC_MODE:
+            description:
+                short: Calibrated SOC estimator mode for battery ${i}
+                long: |
+                    Shadow mode logs the new estimate without changing remaining capacity or failsafes.
+                    Active mode requires all 41 calibrated voltage points, measured BAT${i}_CAPACITY,
+                    configured cell count and valid independent voltage protection. It initializes
+                    after the normal two-second battery startup period when valid voltage is available.
+                    Startup uses the calibrated voltage curve; low-current relaxation is not required.
+                    Invalid active configuration
+                    or missing startup voltage reports unavailable SOC and prevents arming.
+                    External SOC is never replaced. Profile and mode changes are deferred until disarmed.
+            type: enum
+            values:
+                0: Disabled
+                1: Shadow
+                2: Active
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [1, 1, 1]
+
+        BAT${i}_SOC_V0:
+            description:
+                short: Relaxed cell voltage at 0% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V1:
+            description:
+                short: Relaxed cell voltage at 2.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V2:
+            description:
+                short: Relaxed cell voltage at 5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V3:
+            description:
+                short: Relaxed cell voltage at 7.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V4:
+            description:
+                short: Relaxed cell voltage at 10% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V5:
+            description:
+                short: Relaxed cell voltage at 12.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V6:
+            description:
+                short: Relaxed cell voltage at 15% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V7:
+            description:
+                short: Relaxed cell voltage at 17.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V8:
+            description:
+                short: Relaxed cell voltage at 20% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V9:
+            description:
+                short: Relaxed cell voltage at 22.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V10:
+            description:
+                short: Relaxed cell voltage at 25% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V11:
+            description:
+                short: Relaxed cell voltage at 27.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V12:
+            description:
+                short: Relaxed cell voltage at 30% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V13:
+            description:
+                short: Relaxed cell voltage at 32.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V14:
+            description:
+                short: Relaxed cell voltage at 35% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V15:
+            description:
+                short: Relaxed cell voltage at 37.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V16:
+            description:
+                short: Relaxed cell voltage at 40% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V17:
+            description:
+                short: Relaxed cell voltage at 42.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V18:
+            description:
+                short: Relaxed cell voltage at 45% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V19:
+            description:
+                short: Relaxed cell voltage at 47.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V20:
+            description:
+                short: Relaxed cell voltage at 50% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V21:
+            description:
+                short: Relaxed cell voltage at 52.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V22:
+            description:
+                short: Relaxed cell voltage at 55% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V23:
+            description:
+                short: Relaxed cell voltage at 57.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V24:
+            description:
+                short: Relaxed cell voltage at 60% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V25:
+            description:
+                short: Relaxed cell voltage at 62.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V26:
+            description:
+                short: Relaxed cell voltage at 65% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V27:
+            description:
+                short: Relaxed cell voltage at 67.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V28:
+            description:
+                short: Relaxed cell voltage at 70% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V29:
+            description:
+                short: Relaxed cell voltage at 72.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V30:
+            description:
+                short: Relaxed cell voltage at 75% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V31:
+            description:
+                short: Relaxed cell voltage at 77.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V32:
+            description:
+                short: Relaxed cell voltage at 80% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V33:
+            description:
+                short: Relaxed cell voltage at 82.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V34:
+            description:
+                short: Relaxed cell voltage at 85% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V35:
+            description:
+                short: Relaxed cell voltage at 87.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V36:
+            description:
+                short: Relaxed cell voltage at 90% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V37:
+            description:
+                short: Relaxed cell voltage at 92.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V38:
+            description:
+                short: Relaxed cell voltage at 95% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V39:
+            description:
+                short: Relaxed cell voltage at 97.5% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_SOC_V40:
+            description:
+                short: Relaxed cell voltage at 100% SOC for battery ${i}
+                long: |
+                    Calibrated profile point based on measured usable capacity and relaxed voltage.
+                    All points from V0 to V40 must be strictly increasing. Zero means unconfigured;
+                    no generic LiPo curve is supplied. Do not substitute a loaded discharge curve.
+            type: float
+            unit: V
+            min: 0
+            max: 5
+            decimal: 4
+            increment: 0.001
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [0, 0, 0]
+
+        BAT${i}_V_LOW:
+            description:
+                short: Low terminal cell voltage for battery ${i}
+                long: |
+                    Independent terminal-voltage warning for the active calibrated SOC estimator.
+                    Shadow mode logs the prospective warning only. Thresholds must satisfy
+                    V_LOW > V_CRIT > V_EMERG. Validate under representative flight loads.
+            type: float
+            unit: V
+            min: 2.5
+            max: 5
+            decimal: 2
+            increment: 0.01
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [3.5, 3.5, 3.5]
+
+        BAT${i}_V_CRIT:
+            description:
+                short: Critical terminal cell voltage for battery ${i}
+                long: |
+                    Independent terminal-voltage warning for the active calibrated SOC estimator.
+                    Shadow mode logs the prospective warning only. Thresholds must satisfy
+                    V_LOW > V_CRIT > V_EMERG. Validate under representative flight loads.
+            type: float
+            unit: V
+            min: 2.5
+            max: 5
+            decimal: 2
+            increment: 0.01
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [3.4, 3.4, 3.4]
+
+        BAT${i}_V_EMERG:
+            description:
+                short: Emergency terminal cell voltage for battery ${i}
+                long: |
+                    Independent terminal-voltage warning for the active calibrated SOC estimator.
+                    Shadow mode logs the prospective warning only. Thresholds must satisfy
+                    V_LOW > V_CRIT > V_EMERG. Validate under representative flight loads.
+            type: float
+            unit: V
+            min: 2.5
+            max: 5
+            decimal: 2
+            increment: 0.01
+            num_instances: *max_num_config_instances
+            instance_start: 1
+            default: [3.3, 3.3, 3.3]
+
+    - group: Battery SOC Estimation
+      definitions:
+
+        BAT_SOC_TC:
+            description:
+                short: SOC voltage correction time constant
+                long: |
+                    Elapsed-time voltage correction applied after qualification. Larger values give coulomb counting more weight.
+            type: float
+            unit: s
+            min: 1
+            max: 3600
+            decimal: 0
+            default: 300
+
+        BAT_SOC_I_MAX:
+            description:
+                short: Maximum current for disarmed relaxation
+                long: |
+                    Disarmed relaxation and voltage correction require measured discharge current
+                    at or below this limit. This does not restrict startup, coulomb counting or flight corrections.
+                    Idle current overwrite cannot qualify relaxation.
+            type: float
+            unit: A
+            min: 0.01
+            max: 100
+            decimal: 2
+            default: 2
+
+        BAT_SOC_I_STAB:
+            description:
+                short: Disarmed current stability range
+                long: |
+                    Maximum current span over the entire disarmed qualification interval. A larger span restarts settling, including during gradual load changes.
+            type: float
+            unit: A
+            min: 0.01
+            max: 100
+            decimal: 2
+            default: 0.5
+
+        BAT_SOC_SETTLE:
+            description:
+                short: Disarmed voltage settling time
+                long: |
+                    Continuous low and stable current while disarmed required to qualify relaxed voltage
+                    and allow corrections. This is not a startup delay; a voltage-based estimate is available after
+                    normal battery startup. Load changes, stale vehicle status or sample gaps restart settling.
+            type: float
+            unit: s
+            min: 1
+            max: 3600
+            decimal: 0
+            default: 120
+
+        BAT_SOC_F_SETT:
+            description:
+                short: Flight voltage correction qualification time
+                long: |
+                    Continuous semi-stable electrical power required while armed before gradual
+                    voltage corrections start. Power span must remain within BAT_SOC_P_STAB.
+                    Load changes, stale vehicle status, missing measurements or sample gaps restart
+                    qualification. Does not delay startup or pause coulomb counting.
+            type: float
+            unit: s
+            min: 1
+            max: 120
+            decimal: 1
+            default: 10
+
+        BAT_SOC_P_STAB:
+            description:
+                short: Flight electrical power stability range
+                long: |
+                    Maximum peak-to-peak power span as a percentage of the midpoint between minimum
+                    and maximum power over the entire qualification interval. For example, 30 percent
+                    permits 170 to 230 W. Power is measured terminal pack voltage times current.
+                    Exceeding the span restarts flight qualification, including gradual load changes.
+                    No absolute current limit applies to flight corrections.
+            type: float
+            unit: '%'
+            min: 1
+            max: 100
+            decimal: 0
+            default: 30
+
+        BAT_SOC_F_DV:
+            description:
+                short: Flight voltage uncertainty margin per cell
+                long: |
+                    Uncertainty on either side of compensated cell voltage during qualified flight.
+                    The lookup table maps this voltage interval to an SOC interval. Corrections act
+                    toward its nearest edge only when coulomb-updated SOC lies outside the interval.
+                    Suppresses corrections from small load-compensation errors in either direction.
+            type: float
+            unit: V
+            min: 0
+            max: 0.2
+            decimal: 3
+            default: 0.02
+
+        BAT_SOC_F_RATE:
+            description:
+                short: Maximum flight voltage correction rate
+                long: |
+                    Maximum change due to voltage correction in SOC percentage points per minute,
+                    in either direction. BAT_SOC_TC also limits the correction. For example, 2 means
+                    at most two percentage points per minute of qualified flight. This never limits
+                    SOC depletion from measured current and does not modify measured discharge.
+            type: float
+            min: 0.1
+            max: 20
+            decimal: 1
+            default: 2
+
+        BAT_V_TC:
+            description:
+                short: Terminal voltage filter time constant
+                long: |
+                    Elapsed-time low-pass filter for independent voltage protection. Uses actual terminal voltage without resistance compensation.
+            type: float
+            unit: s
+            min: 0.01
+            max: 10
+            decimal: 2
+            default: 1
+
+        BAT_V_DELAY:
+            description:
+                short: Terminal voltage warning debounce
+                long: |
+                    Continuous threshold violation needed after filtering to change voltage warning severity. Also debounces recovery.
+            type: float
+            unit: s
+            min: 0.1
+            max: 30
+            decimal: 1
+            default: 2
+
+        BAT_V_HYST:
+            description:
+                short: Terminal voltage warning hysteresis
+                long: |
+                    Cell voltage must recover above the active threshold by this amount before a voltage warning can clear.
+            type: float
+            unit: V
+            min: 0.001
+            max: 0.5
+            decimal: 3
+            default: 0.05
+
+        BAT_SOC_INFLT:
+            description:
+                short: Allow qualified voltage correction while armed
+                long: |
+                    Allows slow, bounded corrections after semi-stable electrical power qualifies
+                    for BAT_SOC_F_SETT seconds. Uses BAT_SOC_P_STAB, BAT_SOC_F_DV and BAT_SOC_F_RATE
+                    instead of the disarmed low-current and relaxation gates.
+                    Unknown or stale vehicle state prevents relaxation qualification and voltage
+                    correction, but does not prevent startup or coulomb counting.
+            type: boolean
+            default: true
